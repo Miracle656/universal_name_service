@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Search, Sparkles } from 'lucide-react';
 import { usePushWalletContext, PushUI } from '@pushchain/ui-kit';
+import PNSLogo from '../../public/PNS_Logo.png'
 
 interface HeroProps {
   onSearch: (name: string) => void;

@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { PushUniversalWalletProvider, PushUI } from "@pushchain/ui-kit";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import { MyNames } from "./pages/MyNames";
 
 const queryClient = new QueryClient();
 
@@ -27,7 +28,7 @@ const walletConfig = {
 };
 
 const appMetadata = {
-  logoUrl: 'https://images.unsplash.com/photo-1639762681485-074b7f938ba0?auto=format&fit=crop&q=80',
+  logoUrl: 'https://i.postimg.cc/26hdgX30/PNS-Logo.png',
   title: 'Push Name Service',
   description: 'Universal Identity on Push Chain',
 };
@@ -41,6 +42,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/my-names" element={<MyNames />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -1,15 +1,33 @@
-import { useState, useEffect } from 'react';
-import { usePushWalletContext, usePushChainClient, PushUI } from '@pushchain/ui-kit';
-import { PushChain } from '@pushchain/core';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Contract, JsonRpcProvider, id } from 'ethers';
-import { CONTRACT_ADDRESS, CONTRACT_ABI } from '@/lib/contract';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Crown, Edit, Send, RefreshCw, Calendar, Loader2 } from 'lucide-react';
+import { useState, useEffect } from "react";
+import {
+  usePushWalletContext,
+  usePushChainClient,
+  PushUI,
+} from "@pushchain/ui-kit";
+import { PushChain } from "@pushchain/core";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Contract,
+  JsonRpcProvider,
+  id,
+  ethers,
+  getAddress,
+  zeroPadValue,
+  Log,
+} from "ethers";
+import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Crown, Edit, Send, RefreshCw, Calendar, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -17,14 +35,25 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
-import { toast } from 'sonner';
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { getNamesForAddress, storeNameRegistration } from "../firebase/services";
 
 interface NameData {
   name: string;
   expiresAt: Date;
   isPremium: boolean;
   nameHash: string;
+  metadata?: {
+    avatar: string;
+    email: string;
+    url: string;
+    description: string;
+    twitter: string;
+    github: string;
+    discord: string;
+    telegram: string;
+  };
 }
 
 export const MyNames = () => {
@@ -33,135 +62,236 @@ export const MyNames = () => {
   const [contract, setContract] = useState<Contract | null>(null);
   const [myNames, setMyNames] = useState<NameData[]>([]);
   const [loading, setLoading] = useState(false);
-  const [userAddress, setUserAddress] = useState<string>('');
-  const [selectedName, setSelectedName] = useState('');
+  const [userAddress, setUserAddress] = useState<string>("");
+  const [selectedName, setSelectedName] = useState("");
   const [metadata, setMetadata] = useState({
-    avatar: '',
-    email: '',
-    url: '',
-    description: '',
-    twitter: '',
-    github: '',
-    discord: '',
-    telegram: '',
+    avatar: "",
+    email: "",
+    url: "",
+    description: "",
+    twitter: "",
+    github: "",
+    discord: "",
+    telegram: "",
   });
-  const [transferAddress, setTransferAddress] = useState('');
+  const [transferAddress, setTransferAddress] = useState("");
   const [updating, setUpdating] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState("");
 
-  const isConnected = connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
+  const isConnected =
+    connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
 
   // Initialize contract when connected
   useEffect(() => {
     const initContract = async () => {
       if (isConnected && pushChainClient) {
         try {
-          // Use JsonRpcProvider for read operations
-          const provider = new JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
-          const contractInstance = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+          // Always use Push Chain RPC for contract operations since names are stored on Push Chain
+          // regardless of which wallet (Ethereum/Solana/Push) the user connected with
+          const provider = new JsonRpcProvider(
+            "https://evm.rpc-testnet-donut-node1.push.org/"
+          );
+          const contractInstance = new Contract(
+            CONTRACT_ADDRESS,
+            CONTRACT_ABI,
+            provider
+          );
           setContract(contractInstance);
 
           // Get user's address
           const address = pushChainClient.universal.account;
           setUserAddress(address);
+
+          console.log("Contract initialized for address:", address);
+          console.log(
+            "Origin wallet:",
+            pushChainClient.universal.origin?.address
+          );
+          console.log("Universal account:", pushChainClient.universal.account);
         } catch (error) {
-          console.error('Error initializing contract:', error);
+          console.error("Error initializing contract:", error);
           setContract(null);
         }
       } else {
         setContract(null);
-        setUserAddress('');
+        setUserAddress("");
         setMyNames([]);
       }
     };
     initContract();
   }, [isConnected, pushChainClient]);
 
+  const normalizeMetadata = (metadata?: any) => ({
+    avatar: metadata?.avatar || "",
+    email: metadata?.email || "",
+    url: metadata?.url || "",
+    description: metadata?.description || "",
+    twitter: metadata?.twitter || "",
+    github: metadata?.github || "",
+    discord: metadata?.discord || "",
+    telegram: metadata?.telegram || "",
+  });
+
   // Fetch user's names when contract and address are available
   useEffect(() => {
     const fetchMyNames = async () => {
-      if (!contract || !userAddress) return;
+  if (!contract || !userAddress || !pushChainClient) return;
 
-      setLoading(true);
-      try {
-        // Use ethers id() function to compute the event topic hash
-        const eventTopic = id('NameRegistered(bytes32,string,address,uint256,string,string,bool)');
-        
-        // Filter by owner address (indexed parameter at position 2)
-        const addressTopic = '0x000000000000000000000000' + userAddress.slice(2).toLowerCase();
-        
-        const provider = new JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
-        
-        // Get current block number
-        const currentBlock = await provider.getBlockNumber();
-        
-        // Use a smaller chunk size and only query recent blocks for better performance
-        const CHUNK_SIZE = 5000;
-        const BLOCKS_TO_QUERY = 50000; // Only query last 50k blocks for testnet
-        const startBlock = Math.max(0, currentBlock - BLOCKS_TO_QUERY);
-        
-        const allLogs = [];
-        
-        for (let fromBlock = startBlock; fromBlock <= currentBlock; fromBlock += CHUNK_SIZE) {
-          const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, currentBlock);
-          
-          try {
-            const logs = await provider.getLogs({
-              address: CONTRACT_ADDRESS,
-              topics: [eventTopic, null, addressTopic],
-              fromBlock,
-              toBlock,
-            });
-            allLogs.push(...logs);
-          } catch (err) {
-            console.warn(`Skipping blocks ${fromBlock} to ${toBlock} due to error`);
-            // Continue with next chunk even if this one fails
-          }
-        }
+  setLoading(true);
+  setFetchProgress("Initializing...");
 
-        const namesData: NameData[] = [];
-        const seenNames = new Set<string>();
-        
-        for (const log of allLogs) {
-          try {
-            const parsedLog = contract.interface.parseLog({
-              topics: [...log.topics],
-              data: log.data,
-            });
-            
-            const name = parsedLog?.args?.name;
-            if (name && !seenNames.has(name)) {
-              seenNames.add(name);
-              
-              const record = await contract.getNameRecord(name);
-              
-              // Only add if still owned by user and not expired
-              if (record.owner.toLowerCase() === userAddress.toLowerCase()) {
-                const expiresAt = new Date(Number(record.expiresAt) * 1000);
-                
-                // Check if not expired
-                if (expiresAt > new Date()) {
-                  namesData.push({
-                    name,
-                    expiresAt,
-                    isPremium: record.isPremium,
-                    nameHash: await contract.getNameHash(name),
-                  });
-                }
-              }
-            }
-          } catch (err) {
-            console.error('Error parsing log:', err);
-          }
-        }
-        
+  try {
+    const normalizedUEA = getAddress(pushChainClient.universal.account);
+
+    // 1. Try Firebase first (fastest)
+    try {
+      setFetchProgress("Loading from database...");
+      const firebaseNames = await getNamesForAddress(normalizedUEA);
+
+      if (firebaseNames.length > 0) {
+        const namesData = firebaseNames.map((fn) => ({
+          name: fn.name,
+          expiresAt: fn.expiresAt,
+          isPremium: fn.isPremium,
+          nameHash: fn.nameHash,
+          metadata: normalizeMetadata(fn.metadata),
+        }));
+
         setMyNames(namesData);
-      } catch (error) {
-        console.error('Error fetching names:', error);
-        toast.error('Failed to fetch your names');
-      } finally {
+        setFetchProgress("");
         setLoading(false);
+        return;
       }
-    };
+    } catch (error) {
+      console.warn("Firebase failed, using blockchain");
+    }
+
+    // 2. Fallback: Query blockchain using contract filters (BETTER METHOD)
+    setFetchProgress("Querying blockchain...");
+
+    const provider = new JsonRpcProvider("https://evm.rpc-testnet-donut-node1.push.org/");
+    const currentBlock = await provider.getBlockNumber();
+    
+    // Query last 50k blocks in chunks
+    const MAX_BLOCKS_TO_QUERY = 50000;
+    const CHUNK_SIZE = 10000; // 10k blocks per query
+    const startBlock = Math.max(0, currentBlock - MAX_BLOCKS_TO_QUERY);
+
+    // ✅ Create a filter for names registered by this address
+    const filter = contract.filters.NameRegistered(null, normalizedUEA);
+    
+    let allEvents: any[] = [];
+    let processedBlocks = 0;
+    const totalBlocks = currentBlock - startBlock;
+
+    // Query in chunks
+    for (let fromBlock = startBlock; fromBlock <= currentBlock; fromBlock += CHUNK_SIZE) {
+      const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, currentBlock);
+      
+      try {
+        // ✅ Use contract.queryFilter instead of provider.getLogs
+        const events = await contract.queryFilter(filter, fromBlock, toBlock);
+        allEvents.push(...events);
+        
+        processedBlocks += (toBlock - fromBlock + 1);
+        const progress = Math.round((processedBlocks / totalBlocks) * 100);
+        setFetchProgress(`Searching blockchain... ${progress}%`);
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.warn(`Error querying blocks ${fromBlock}-${toBlock}:`, error);
+        // Continue with next chunk
+      }
+    }
+
+    console.log(`Found ${allEvents.length} registration events`);
+
+    // 3. Process events and get current name data
+    const namesData: NameData[] = [];
+    const seenNames = new Set<string>();
+
+    setFetchProgress("Processing names...");
+
+    for (const event of allEvents) {
+      try {
+        // ✅ Event args are already parsed by ethers
+        const name = event.args?.name;
+        if (!name || seenNames.has(name)) continue;
+        seenNames.add(name);
+
+        // Verify current ownership (name might have been transferred)
+        const record = await contract.getNameRecord(name);
+        const recordOwner = record.owner ? getAddress(record.owner) : null;
+
+        if (
+          recordOwner &&
+          recordOwner.toLowerCase() === normalizedUEA.toLowerCase()
+        ) {
+          const expiresAt = new Date(Number(record.expiresAt) * 1000);
+          
+          // Only include non-expired names
+          if (expiresAt > new Date()) {
+            // Fetch metadata
+            let nameMetadata = null;
+            try {
+              const metadata = await contract.getMetadata(name);
+              nameMetadata = {
+                avatar: metadata.avatar || '',
+                email: metadata.email || '',
+                url: metadata.url || '',
+                description: metadata.description || '',
+                twitter: metadata.twitter || '',
+                github: metadata.github || '',
+                discord: metadata.discord || '',
+                telegram: metadata.telegram || '',
+              };
+            } catch (metadataError) {
+              console.warn(`Failed to fetch metadata for ${name}:`, metadataError);
+              nameMetadata = normalizeMetadata(null);
+            }
+
+            namesData.push({
+              name,
+              expiresAt,
+              isPremium: Boolean(record.isPremium),
+              nameHash: await contract.getNameHash(name),
+              metadata: nameMetadata,
+            });
+
+            // Store in Firebase for future fast access
+            try {
+              await storeNameRegistration({
+                name,
+                owner: normalizedUEA,
+                expiresAt,
+                isPremium: Boolean(record.isPremium),
+                nameHash: await contract.getNameHash(name),
+                registeredAt: new Date(Number(record.registeredAt) * 1000),
+                transactionHash: event.transactionHash,
+                chainId: event.args?.originChainId || 'push-chain',
+                metadata: nameMetadata,
+              });
+            } catch (fbError) {
+              console.warn('Failed to store in Firebase:', fbError);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error processing event:", err);
+      }
+    }
+
+    setMyNames(namesData);
+    setFetchProgress("");
+  } catch (error) {
+    console.error("Error fetching names:", error);
+    toast.error("Failed to fetch your names");
+    setFetchProgress("");
+  } finally {
+    setLoading(false);
+  }
+};
 
     fetchMyNames();
   }, [contract, userAddress]);
@@ -173,7 +303,7 @@ export const MyNames = () => {
     try {
       const data = PushChain.utils.helpers.encodeTxData({
         abi: CONTRACT_ABI,
-        functionName: 'setMetadata',
+        functionName: "setMetadata",
         args: [
           selectedName,
           metadata.avatar,
@@ -193,24 +323,25 @@ export const MyNames = () => {
         data: data,
       });
 
-      toast.success('Updating metadata...');
+      toast.success("Updating metadata...");
       await tx.wait();
-      toast.success('Metadata updated successfully!');
+      toast.success("Metadata updated successfully!");
     } catch (error) {
-      console.error('Error updating metadata:', error);
-      toast.error('Failed to update metadata');
+      console.error("Error updating metadata:", error);
+      toast.error("Failed to update metadata");
     } finally {
       setUpdating(false);
     }
   };
 
   const handleTransfer = async () => {
-    if (!contract || !selectedName || !transferAddress || !pushChainClient) return;
+    if (!contract || !selectedName || !transferAddress || !pushChainClient)
+      return;
 
     try {
       const data = PushChain.utils.helpers.encodeTxData({
         abi: CONTRACT_ABI,
-        functionName: 'transfer',
+        functionName: "transfer",
         args: [selectedName, transferAddress],
       });
 
@@ -220,16 +351,16 @@ export const MyNames = () => {
         data: data,
       });
 
-      toast.success('Transfer initiated...');
+      toast.success("Transfer initiated...");
       await tx.wait();
-      toast.success('Name transferred successfully!');
-      setTransferAddress('');
-      
+      toast.success("Name transferred successfully!");
+      setTransferAddress("");
+
       // Refresh names list
       window.location.reload();
     } catch (error) {
-      console.error('Error transferring name:', error);
-      toast.error('Failed to transfer name');
+      console.error("Error transferring name:", error);
+      toast.error("Failed to transfer name");
     }
   };
 
@@ -239,10 +370,10 @@ export const MyNames = () => {
     try {
       const nameHash = await contract.getNameHash(name);
       const fee = await contract.calculateRegistrationFee(nameHash);
-      
+
       const data = PushChain.utils.helpers.encodeTxData({
         abi: CONTRACT_ABI,
-        functionName: 'renew',
+        functionName: "renew",
         args: [name],
       });
 
@@ -251,16 +382,16 @@ export const MyNames = () => {
         value: fee,
         data: data,
       });
-      
-      toast.success('Renewing name...');
+
+      toast.success("Renewing name...");
       await tx.wait();
-      toast.success('Name renewed successfully!');
-      
+      toast.success("Name renewed successfully!");
+
       // Refresh names list
       window.location.reload();
     } catch (error) {
-      console.error('Error renewing name:', error);
-      toast.error('Failed to renew name');
+      console.error("Error renewing name:", error);
+      toast.error("Failed to renew name");
     }
   };
 
@@ -269,7 +400,9 @@ export const MyNames = () => {
       <section id="my-names" className="container py-12">
         <Card className="mx-auto max-w-2xl text-center">
           <CardContent className="py-12">
-            <p className="text-muted-foreground">Connect your wallet to view your names</p>
+            <p className="text-muted-foreground">
+              Connect your wallet to view your names
+            </p>
           </CardContent>
         </Card>
       </section>
@@ -281,12 +414,22 @@ export const MyNames = () => {
       <section id="my-names" className="container py-12">
         <div className="mb-8">
           <h2 className="text-3xl font-bold">My Names</h2>
-          <p className="text-muted-foreground">Manage your registered Push names</p>
+          <p className="text-muted-foreground">
+            Manage your registered Push names
+          </p>
         </div>
         <Card className="text-center">
           <CardContent className="py-12">
             <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-            <p className="mt-4 text-muted-foreground">Loading your names...</p>
+            <p className="mt-4 text-muted-foreground">
+              {fetchProgress || "Loading your names..."}
+            </p>
+            {fetchProgress && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                This may take a moment for external wallets as we search through
+                the blockchain history
+              </p>
+            )}
           </CardContent>
         </Card>
       </section>
@@ -297,14 +440,45 @@ export const MyNames = () => {
     <section id="my-names" className="container py-12">
       <div className="mb-8">
         <h2 className="text-3xl font-bold">My Names</h2>
-        <p className="text-muted-foreground">Manage your registered Push names</p>
+        <p className="text-muted-foreground">
+          Manage your registered Push names
+        </p>
+        {isConnected && pushChainClient && (
+          <div className="mt-4 p-3 bg-muted/50 rounded-lg text-sm">
+            <p className="text-muted-foreground">
+              <strong>Connected:</strong> {userAddress}
+            </p>
+            {pushChainClient.universal.origin && (
+              <p className="text-muted-foreground">
+                <strong>Origin Wallet:</strong>{" "}
+                {pushChainClient.universal.origin.address}
+                <span className="ml-2 text-xs bg-secondary px-2 py-1 rounded">
+                  {pushChainClient.universal.origin.chain || "External"}
+                </span>
+              </p>
+            )}
+            {pushChainClient.universal.origin &&
+              pushChainClient.universal.account !==
+                pushChainClient.universal.origin.address && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  ℹ️ External wallet detected. Using optimized querying for
+                  better performance.
+                </p>
+              )}
+          </div>
+        )}
       </div>
 
       {myNames.length === 0 ? (
         <Card className="text-center">
           <CardContent className="py-12">
-            <p className="text-muted-foreground">You don't have any registered names yet</p>
-            <Button className="mt-4 bg-gradient-primary" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <p className="text-muted-foreground">
+              You don't have any registered names yet
+            </p>
+            <Button
+              className="mt-4 bg-gradient-primary"
+              onClick={() => (window.location.href = "/")}
+            >
               Register Your First Name
             </Button>
           </CardContent>
@@ -312,7 +486,10 @@ export const MyNames = () => {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {myNames.map((nameData) => (
-            <Card key={nameData.name} className="group transition-all hover:shadow-lg">
+            <Card
+              key={nameData.name}
+              className="group transition-all hover:shadow-lg"
+            >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   {nameData.name}.push
@@ -329,13 +506,145 @@ export const MyNames = () => {
                 </CardDescription>
               </CardHeader>
 
-              <CardContent className="space-y-2">
+              <CardContent className="space-y-3">
+                {/* Display existing metadata if available */}
+                {nameData.metadata && (
+                  <div className="p-3 bg-muted/30 rounded-lg space-y-2">
+                    <h4 className="text-sm font-medium text-muted-foreground">
+                      Current Metadata:
+                    </h4>
+                    {nameData.metadata.avatar && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium">Avatar:</span>
+                        <img
+                          src={nameData.metadata.avatar}
+                          alt="Avatar"
+                          className="w-8 h-8 rounded-full object-cover border border-border"
+                          onError={(e) => {
+                            e.currentTarget.style.display = "none";
+                          }}
+                        />
+                        <span className="truncate text-muted-foreground">
+                          {nameData.metadata.avatar}
+                        </span>
+                      </div>
+                    )}
+                    {nameData.metadata.email && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium">Email:</span>
+                        <a
+                          href={`mailto:${nameData.metadata.email}`}
+                          className="truncate text-blue-600 hover:text-blue-800 underline"
+                        >
+                          {nameData.metadata.email}
+                        </a>
+                      </div>
+                    )}
+                    {nameData.metadata.url && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium">Website:</span>
+                        <a
+                          href={nameData.metadata.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="truncate text-blue-600 hover:text-blue-800 underline"
+                        >
+                          {nameData.metadata.url}
+                        </a>
+                      </div>
+                    )}
+                    {nameData.metadata.description && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium">Description:</span>
+                        <span className="truncate">
+                          {nameData.metadata.description}
+                        </span>
+                      </div>
+                    )}
+                    {(nameData.metadata.twitter ||
+                      nameData.metadata.github ||
+                      nameData.metadata.discord ||
+                      nameData.metadata.telegram) && (
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {nameData.metadata.twitter && (
+                          <a
+                            href={`https://twitter.com/${nameData.metadata.twitter.replace(
+                              "@",
+                              ""
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
+                          >
+                            Twitter: {nameData.metadata.twitter}
+                          </a>
+                        )}
+                        {nameData.metadata.github && (
+                          <a
+                            href={`https://github.com/${nameData.metadata.github}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-gray-100 text-gray-800 px-2 py-1 rounded hover:bg-gray-200 transition-colors"
+                          >
+                            GitHub: {nameData.metadata.github}
+                          </a>
+                        )}
+                        {nameData.metadata.discord && (
+                          <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                            Discord: {nameData.metadata.discord}
+                          </span>
+                        )}
+                        {nameData.metadata.telegram && (
+                          <a
+                            href={`https://t.me/${nameData.metadata.telegram.replace(
+                              "@",
+                              ""
+                            )}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
+                          >
+                            Telegram: {nameData.metadata.telegram}
+                          </a>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button
                       variant="outline"
                       className="w-full gap-2"
-                      onClick={() => setSelectedName(nameData.name)}
+                      onClick={() => {
+                        setSelectedName(nameData.name);
+                        // Pre-populate metadata if it exists
+                        if (nameData.metadata) {
+                          setMetadata({
+                            avatar: nameData.metadata.avatar || "",
+                            email: nameData.metadata.email || "",
+                            url: nameData.metadata.url || "",
+                            description: nameData.metadata.description || "",
+                            twitter: nameData.metadata.twitter || "",
+                            github: nameData.metadata.github || "",
+                            discord: nameData.metadata.discord || "",
+                            telegram: nameData.metadata.telegram || "",
+                          });
+                        } else {
+                          // Reset metadata if none exists
+                          setMetadata({
+                            avatar: "",
+                            email: "",
+                            url: "",
+                            description: "",
+                            twitter: "",
+                            github: "",
+                            discord: "",
+                            telegram: "",
+                          });
+                        }
+                      }}
                     >
                       <Edit className="h-4 w-4" />
                       Edit Metadata
@@ -343,7 +652,9 @@ export const MyNames = () => {
                   </DialogTrigger>
                   <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                      <DialogTitle>Edit Metadata for {selectedName}.push</DialogTitle>
+                      <DialogTitle>
+                        Edit Metadata for {selectedName}.push
+                      </DialogTitle>
                       <DialogDescription>
                         Update your name's profile information and social links
                       </DialogDescription>
@@ -361,7 +672,12 @@ export const MyNames = () => {
                           <Input
                             id="avatar"
                             value={metadata.avatar}
-                            onChange={(e) => setMetadata({ ...metadata, avatar: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                avatar: e.target.value,
+                              })
+                            }
                             placeholder="https://..."
                           />
                         </div>
@@ -371,7 +687,12 @@ export const MyNames = () => {
                             id="email"
                             type="email"
                             value={metadata.email}
-                            onChange={(e) => setMetadata({ ...metadata, email: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                email: e.target.value,
+                              })
+                            }
                           />
                         </div>
                         <div className="space-y-2">
@@ -379,7 +700,9 @@ export const MyNames = () => {
                           <Input
                             id="url"
                             value={metadata.url}
-                            onChange={(e) => setMetadata({ ...metadata, url: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({ ...metadata, url: e.target.value })
+                            }
                             placeholder="https://..."
                           />
                         </div>
@@ -388,7 +711,12 @@ export const MyNames = () => {
                           <Input
                             id="description"
                             value={metadata.description}
-                            onChange={(e) => setMetadata({ ...metadata, description: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                description: e.target.value,
+                              })
+                            }
                           />
                         </div>
                       </TabsContent>
@@ -399,7 +727,12 @@ export const MyNames = () => {
                           <Input
                             id="twitter"
                             value={metadata.twitter}
-                            onChange={(e) => setMetadata({ ...metadata, twitter: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                twitter: e.target.value,
+                              })
+                            }
                             placeholder="@username"
                           />
                         </div>
@@ -408,7 +741,12 @@ export const MyNames = () => {
                           <Input
                             id="github"
                             value={metadata.github}
-                            onChange={(e) => setMetadata({ ...metadata, github: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                github: e.target.value,
+                              })
+                            }
                             placeholder="username"
                           />
                         </div>
@@ -417,7 +755,12 @@ export const MyNames = () => {
                           <Input
                             id="discord"
                             value={metadata.discord}
-                            onChange={(e) => setMetadata({ ...metadata, discord: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                discord: e.target.value,
+                              })
+                            }
                             placeholder="username#0000"
                           />
                         </div>
@@ -426,7 +769,12 @@ export const MyNames = () => {
                           <Input
                             id="telegram"
                             value={metadata.telegram}
-                            onChange={(e) => setMetadata({ ...metadata, telegram: e.target.value })}
+                            onChange={(e) =>
+                              setMetadata({
+                                ...metadata,
+                                telegram: e.target.value,
+                              })
+                            }
                             placeholder="@username"
                           />
                         </div>
@@ -438,7 +786,7 @@ export const MyNames = () => {
                       disabled={updating}
                       className="w-full bg-gradient-primary"
                     >
-                      {updating ? 'Updating...' : 'Save Changes'}
+                      {updating ? "Updating..." : "Save Changes"}
                     </Button>
                   </DialogContent>
                 </Dialog>
@@ -463,7 +811,9 @@ export const MyNames = () => {
                     </DialogHeader>
                     <div className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="transfer-address">Recipient Address</Label>
+                        <Label htmlFor="transfer-address">
+                          Recipient Address
+                        </Label>
                         <Input
                           id="transfer-address"
                           value={transferAddress}

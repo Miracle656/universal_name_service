@@ -8,7 +8,8 @@ import { Loader2, CheckCircle2, XCircle, Crown, Calendar, User, Network, Info } 
 import { toast } from 'sonner';
 import { formatEther, Contract, BrowserProvider } from 'ethers';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '@/lib/contract';
-import { ethers } from 'ethers';
+import { ethers, getAddress } from 'ethers';
+import { storeNameRegistration } from '../firebase/services';
 
 interface NameSearchProps {
   searchName: string;
@@ -132,6 +133,23 @@ export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) =
 
       toast.success('Registration transaction submitted');
       await tx.wait();
+
+try {
+  await storeNameRegistration({
+    name: searchName,
+    owner: getAddress(pushChainClient.universal.account),
+    expiresAt: new Date(Date.now() + 31536000000), // 1 year
+    isPremium: nameData.isPremium || false,
+    nameHash: await contract.getNameHash(searchName),
+    registeredAt: new Date(),
+    transactionHash: tx.hash,
+    chainId: pushChainClient.universal.origin?.chain || 'push-chain',
+  });
+  console.log('✅ Stored in Firebase');
+} catch (err) {
+  console.warn('Firebase storage failed:', err);
+}
+
       toast.success('Name registered successfully!');
       onRegisterSuccess();
     } catch (error) {

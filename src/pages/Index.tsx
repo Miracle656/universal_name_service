@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Header } from '@/components/Header';
 import { Hero } from '@/components/Hero';
 import { NameSearch } from '@/components/NameSearch';
-import { MyNames } from '@/components/MyNames';
+import { Features } from '@/components/Features';
 
 const Index = () => {
   const [searchName, setSearchName] = useState('');
@@ -17,10 +17,8 @@ const Index = () => {
 
   const handleRegisterSuccess = () => {
     setSearchName('');
-    // Scroll to my names
-    setTimeout(() => {
-      document.getElementById('my-names')?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
+    // Redirect to my names page
+    window.location.href = '/my-names';
   };
 
   return (
@@ -28,7 +26,7 @@ const Index = () => {
       <Header />
       <Hero onSearch={handleSearch} />
       <NameSearch searchName={searchName} onRegisterSuccess={handleRegisterSuccess} />
-      <MyNames />
+      <Features />
       
       <footer className="border-t border-border/40 py-8">
         <div className="container text-center text-sm text-muted-foreground">

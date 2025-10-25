@@ -1,4 +1,6 @@
 import { PushUniversalAccountButton } from '@pushchain/ui-kit';
+import PNSLogo from '../../public/PNS_Logo.png';
+import { Link } from 'react-router-dom';
 
 export const Header = () => {
   return (
@@ -6,21 +8,19 @@ export const Header = () => {
       <div className="container flex h-16 items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-lg bg-gradient-primary" />
-          <span className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            Push Names
-          </span>
+          <img className='w-36' src={PNSLogo} alt="pnslogo" />
         </div>
 
         <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-          <a href="#search" className="transition-colors hover:text-primary">
+          <Link to="/" className="transition-colors hover:text-primary">
             Search
-          </a>
-          <a href="#register" className="transition-colors hover:text-primary">
+          </Link>
+          <Link to="/" className="transition-colors hover:text-primary">
             Register
-          </a>
-          <a href="#my-names" className="transition-colors hover:text-primary">
+          </Link>
+          <Link to="/my-names" className="transition-colors hover:text-primary">
             My Names
-          </a>
+          </Link>
         </nav>
 
         <div>
