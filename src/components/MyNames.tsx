@@ -138,147 +138,46 @@ export const MyNames = () => {
   if (!contract || !userAddress || !pushChainClient) return;
 
   setLoading(true);
-  setFetchProgress("Initializing...");
+  setFetchProgress("Loading your names...");
 
   try {
     const normalizedUEA = getAddress(pushChainClient.universal.account);
 
-    // 1. Try Firebase first (fastest)
-    try {
-      setFetchProgress("Loading from database...");
-      const firebaseNames = await getNamesForAddress(normalizedUEA);
+    // ✅ SUPER SIMPLE: Just call the contract function!
+    const [names, hashes, total] = await contract.getNamesByOwner(
+      normalizedUEA,
+      0,  // offset
+      100 // limit - get first 100 names
+    );
 
-      if (firebaseNames.length > 0) {
-        const namesData = firebaseNames.map((fn) => ({
-          name: fn.name,
-          expiresAt: fn.expiresAt,
-          isPremium: fn.isPremium,
-          nameHash: fn.nameHash,
-          metadata: normalizeMetadata(fn.metadata),
-        }));
+    console.log(`Found ${total} names`);
 
-        setMyNames(namesData);
-        setFetchProgress("");
-        setLoading(false);
-        return;
-      }
-    } catch (error) {
-      console.warn("Firebase failed, using blockchain");
-    }
-
-    // 2. Fallback: Query blockchain using contract filters (BETTER METHOD)
-    setFetchProgress("Querying blockchain...");
-
-    const provider = new JsonRpcProvider("https://evm.rpc-testnet-donut-node1.push.org/");
-    const currentBlock = await provider.getBlockNumber();
-    
-    // Query last 50k blocks in chunks
-    const MAX_BLOCKS_TO_QUERY = 50000;
-    const CHUNK_SIZE = 10000; // 10k blocks per query
-    const startBlock = Math.max(0, currentBlock - MAX_BLOCKS_TO_QUERY);
-
-    // ✅ Create a filter for names registered by this address
-    const filter = contract.filters.NameRegistered(null, normalizedUEA);
-    
-    let allEvents: any[] = [];
-    let processedBlocks = 0;
-    const totalBlocks = currentBlock - startBlock;
-
-    // Query in chunks
-    for (let fromBlock = startBlock; fromBlock <= currentBlock; fromBlock += CHUNK_SIZE) {
-      const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, currentBlock);
-      
-      try {
-        // ✅ Use contract.queryFilter instead of provider.getLogs
-        const events = await contract.queryFilter(filter, fromBlock, toBlock);
-        allEvents.push(...events);
-        
-        processedBlocks += (toBlock - fromBlock + 1);
-        const progress = Math.round((processedBlocks / totalBlocks) * 100);
-        setFetchProgress(`Searching blockchain... ${progress}%`);
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (error) {
-        console.warn(`Error querying blocks ${fromBlock}-${toBlock}:`, error);
-        // Continue with next chunk
-      }
-    }
-
-    console.log(`Found ${allEvents.length} registration events`);
-
-    // 3. Process events and get current name data
+    // Process the names
     const namesData: NameData[] = [];
-    const seenNames = new Set<string>();
 
-    setFetchProgress("Processing names...");
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const record = await contract.getNameRecord(name);
+      const expiresAt = new Date(Number(record.expiresAt) * 1000);
 
-    for (const event of allEvents) {
-      try {
-        // ✅ Event args are already parsed by ethers
-        const name = event.args?.name;
-        if (!name || seenNames.has(name)) continue;
-        seenNames.add(name);
-
-        // Verify current ownership (name might have been transferred)
-        const record = await contract.getNameRecord(name);
-        const recordOwner = record.owner ? getAddress(record.owner) : null;
-
-        if (
-          recordOwner &&
-          recordOwner.toLowerCase() === normalizedUEA.toLowerCase()
-        ) {
-          const expiresAt = new Date(Number(record.expiresAt) * 1000);
-          
-          // Only include non-expired names
-          if (expiresAt > new Date()) {
-            // Fetch metadata
-            let nameMetadata = null;
-            try {
-              const metadata = await contract.getMetadata(name);
-              nameMetadata = {
-                avatar: metadata.avatar || '',
-                email: metadata.email || '',
-                url: metadata.url || '',
-                description: metadata.description || '',
-                twitter: metadata.twitter || '',
-                github: metadata.github || '',
-                discord: metadata.discord || '',
-                telegram: metadata.telegram || '',
-              };
-            } catch (metadataError) {
-              console.warn(`Failed to fetch metadata for ${name}:`, metadataError);
-              nameMetadata = normalizeMetadata(null);
-            }
-
-            namesData.push({
-              name,
-              expiresAt,
-              isPremium: Boolean(record.isPremium),
-              nameHash: await contract.getNameHash(name),
-              metadata: nameMetadata,
-            });
-
-            // Store in Firebase for future fast access
-            try {
-              await storeNameRegistration({
-                name,
-                owner: normalizedUEA,
-                expiresAt,
-                isPremium: Boolean(record.isPremium),
-                nameHash: await contract.getNameHash(name),
-                registeredAt: new Date(Number(record.registeredAt) * 1000),
-                transactionHash: event.transactionHash,
-                chainId: event.args?.originChainId || 'push-chain',
-                metadata: nameMetadata,
-              });
-            } catch (fbError) {
-              console.warn('Failed to store in Firebase:', fbError);
-            }
-          }
+      // Only include non-expired names
+      if (expiresAt > new Date()) {
+        // Fetch metadata
+        let nameMetadata = null;
+        try {
+          const metadata = await contract.getMetadata(name);
+          nameMetadata = normalizeMetadata(metadata);
+        } catch (err) {
+          nameMetadata = normalizeMetadata(null);
         }
-      } catch (err) {
-        console.error("Error processing event:", err);
+
+        namesData.push({
+          name,
+          expiresAt,
+          isPremium: Boolean(record.isPremium),
+          nameHash: hashes[i],
+          metadata: nameMetadata,
+        });
       }
     }
 
@@ -287,7 +186,6 @@ export const MyNames = () => {
   } catch (error) {
     console.error("Error fetching names:", error);
     toast.error("Failed to fetch your names");
-    setFetchProgress("");
   } finally {
     setLoading(false);
   }
