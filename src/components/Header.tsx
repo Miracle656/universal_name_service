@@ -1,10 +1,22 @@
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
-import { PushUniversalAccountButton } from '@pushchain/ui-kit';
-import { Button } from '@/components/ui/button';
+import { PushUniversalAccountButton, usePushWalletContext, usePushChainClient, PushUI } from '@pushchain/ui-kit';
+import { usePNSName } from '@/hooks/usePNSName';
 
 export const Header = () => {
   const headerRef = useRef<HTMLElement>(null);
+  const walletContext = usePushWalletContext();
+  const { connectionStatus } = walletContext;
+  console.log('[Header] Wallet Context:', walletContext);
+  const { pushChainClient } = usePushChainClient();
+
+  // Extract EVM address from CAIP-10 format (e.g., "eip155:42101:0x...")
+  const evmAddress = pushChainClient?.universal?.account?.split(':').pop();
+
+  // Fetch PNS name for the connected address
+  const { pnsName, loading: pnsLoading } = usePNSName(evmAddress);
+
+  const isConnected = connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
 
   useEffect(() => {
     if (headerRef.current) {
@@ -16,6 +28,8 @@ export const Header = () => {
       });
     }
   }, []);
+
+
 
   return (
     <header
@@ -44,8 +58,22 @@ export const Header = () => {
           </nav>
 
           {/* Connect Wallet */}
-          <div>
-            <PushUniversalAccountButton />
+          <div className="flex items-center gap-4">
+            {isConnected && pnsName && (
+              <div className="px-4 py-2 bg-[#D548EC]/10 border border-[#D548EC]/30 rounded-xl backdrop-blur-sm">
+                <span className="font-bold bg-gradient-to-r from-[#D548EC] to-purple-400 bg-clip-text text-transparent">
+                  {pnsName}.push
+                </span>
+              </div>
+            )}
+
+            <PushUniversalAccountButton
+              connectButtonText="Connect Wallet"
+              themeOverrides={{
+                '--pwauth-btn-connect-bg-color': '#D548EC',
+                // '--pwauth-btn-connect-hover-bg-color': '#e76ff5',
+              }}
+            />
           </div>
         </div>
       </div>

@@ -98,24 +98,6 @@ graph LR
         ┌─────────────────┼─────────────────┐
         │                 │                 │
         ▼                 ▼                 ▼
-┌──────────────┐  ┌──────────────┐
-│ Push Chain   │  │   IPFS       │
-│ (Contracts)  │  │ (Metadata)   │
-└──────────────┘  └──────────────┘
-```
-
-## 📜 Smart Contract
-
-### Contract Details
-
-- **Network**: Push Chain Testnet
-- **Contract Address**: `0x2Fa83bc81c688D5edc760D4cBB60320501Ae67eC`
-- **Explorer**: [View on Explorer](https://donut.push.network/address/0x2Fa83bc81c688D5edc760D4cBB60320501Ae67eC)
-
-### Key Functions
-```solidity
-// Register a new name
-function register(string name) external payable returns (bytes32);
 
 // Check if name is available
 function isNameAvailable(string name) external view returns (bool);
@@ -209,14 +191,15 @@ event NameRenewed(
 
 ### Basic Name Registration
 ```typescript
-import { PNSClient } from '@miracleorg/pns-sdk';
+import { PNSClient, PNSNetwork } from '@miracleorg/pns-sdk';
 import { JsonRpcProvider, Wallet } from 'ethers';
 
 // Initialize SDK
-const pns = new PNSClient({
-  contractAddress: '0x2Fa83bc81c688D5edc760D4cBB60320501Ae67eC',
-  provider: new JsonRpcProvider('https://rpc.push.org'),
-  signer: new Wallet(process.env.PRIVATE_KEY, provider),
+const provider = new JsonRpcProvider('https://rpc.push.org');
+const signer = new Wallet(process.env.PRIVATE_KEY, provider);
+
+const pns = await PNSClient.initialize(signer, {
+  network: PNSNetwork.TESTNET
 });
 
 // Check availability
@@ -262,17 +245,18 @@ await pns.setMetadata({
 
 For developers looking to integrate PNS into their applications, we provide an official SDK:
 ```bash
-npm i @miracleorg/pns-sdk ethers
+npm i @miracleorg/universal-name-service ethers
 ```
 
 **SDK Features:**
 - ✅ Full TypeScript support
-- ✅ Multi-chain resolution
-- ✅ Metadata management
-- ✅ Chain statistics
-- ✅ Comprehensive utilities
+- ✅ Tree-shakeable
+- ✅ Batch operations
+- ✅ Caching layer
+- ✅ Event subscriptions
+- ✅ React hooks
 
-**Documentation**: [SDK Documentation](https://www.npmjs.com/package/@miracleorg/pns-sdk)
+**Documentation**: [SDK Documentation](https://www.npmjs.com/package/@miracleorg/universal-name-service)
 
 
 ## 🤝 Contributing

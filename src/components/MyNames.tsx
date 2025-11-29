@@ -278,6 +278,32 @@ export const MyNames = () => {
     }
   };
 
+  const handleSetPrimary = async (name: string) => {
+    if (!contract || !pushChainClient) return;
+
+    try {
+      const data = PushChain.utils.helpers.encodeTxData({
+        abi: CONTRACT_ABI,
+        functionName: "setPrimaryName",
+        args: [name],
+      });
+
+      const tx = await pushChainClient.universal.sendTransaction({
+        to: CONTRACT_ADDRESS,
+        value: BigInt(0),
+        data: data,
+      });
+
+      toast.success("Setting as primary name...");
+      await tx.wait();
+      toast.success(`${name}.push is now your primary name!`);
+      window.location.reload();
+    } catch (error) {
+      console.error("Error setting primary name:", error);
+      toast.error("Failed to set primary name");
+    }
+  };
+
   if (!isConnected) {
     return (
       <section id="my-names" className="container py-20 min-h-[60vh] flex items-center justify-center">
@@ -529,6 +555,16 @@ export const MyNames = () => {
                       </DialogContent>
                     </Dialog>
                   </div>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full gap-2 bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 hover:border-cyan-400/50 text-cyan-200"
+                    onClick={() => handleSetPrimary(nameData.name)}
+                  >
+                    <Crown className="h-4 w-4" />
+                    Set as Primary
+                  </Button>
 
                   <Button
                     variant="secondary"
