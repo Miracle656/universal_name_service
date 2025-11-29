@@ -11,7 +11,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@hookform/resolvers": "^3.10.0",
+    "@iconify/react": "^6.0.2",
+    "@mui/material": "^7.3.5",
     "@pushchain/core": "^2.0.16",
     "@pushchain/ui-kit": "^2.0.9",
     "@radix-ui/react-accordion": "^1.2.11",
@@ -50,7 +54,8 @@
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
     "ethers": "^6.15.0",
-    "firebase": "^12.4.0",
+    "framer-motion": "^12.23.24",
+    "gsap": "^3.13.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",

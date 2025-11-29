@@ -23,7 +23,7 @@ Push Name Service (PNS) is a decentralized naming system built on Push Chain tha
 
 ### 🚀 Technical Features
 - **Decentralized**: All name records stored on-chain
-- **Instant Loading**: Firebase caching layer for sub-second lookups
+
 - **Gas Efficient**: Optimized smart contract design
 - **Event-Driven**: Real-time updates via blockchain events
 - **Secure**: Ownership verification and safe transfer mechanisms
@@ -69,14 +69,6 @@ npm run dev
 
 ### Environment Variables
 ```env
-# Firebase Configuration
-VITE_FIREBASE_API_KEY=your_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your_project_id
-VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
-VITE_FIREBASE_APP_ID=1:123456789:web:abc123
-
 # Push Chain Configuration
 VITE_PUSH_CHAIN_RPC=https://evm.rpc-testnet-donut-node1.push.org/
 VITE_CONTRACT_ADDRESS=0x2Fa83bc81c688D5edc760D4cBB60320501Ae67eC
@@ -91,8 +83,7 @@ graph LR
     B -->|Available| C[Calculate Fee]
     C -->|Pay & Sign| D[Smart Contract]
     D -->|Emit Event| E[Blockchain]
-    E -->|Index Event| F[Firebase Cache]
-    F -->|Instant Lookup| G[User Dashboard]
+    E -->|Instant Lookup| G[User Dashboard]
 ```
 
 ### Architecture Overview
@@ -107,10 +98,10 @@ graph LR
         ┌─────────────────┼─────────────────┐
         │                 │                 │
         ▼                 ▼                 ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Firebase     │  │ Push Chain   │  │   IPFS       │
-│ (Cache)      │  │ (Contracts)  │  │ (Metadata)   │
-└──────────────┘  └──────────────┘  └──────────────┘
+┌──────────────┐  ┌──────────────┐
+│ Push Chain   │  │   IPFS       │
+│ (Contracts)  │  │ (Metadata)   │
+└──────────────┘  └──────────────┘
 ```
 
 ## 📜 Smart Contract
@@ -191,7 +182,7 @@ event NameRenewed(
 - **@pushchain/ui-kit** - Push Chain wallet integration
 
 #### Backend
-- **Firebase Firestore** - Caching & indexing
+
 - **Push Chain RPC** - Blockchain queries
 - **IPFS** (optional) - Decentralized metadata storage
 
@@ -206,36 +197,35 @@ event NameRenewed(
 ```
    User → Frontend → Smart Contract → Blockchain
                                         ↓
-   User ← Frontend ← Firebase ← Event Indexer
+   User ← Frontend ← Event Indexer
 ```
 
 2. **Name Lookup**
 ```
-   User → Frontend → Firebase (Cache) → Instant Response
-                          ↓ (if miss)
-                     Blockchain → Index → Response
+   User → Frontend → Blockchain → Index → Response
 ```
 
 ## 💡 Usage Examples
 
 ### Basic Name Registration
 ```typescript
-import { UniversalNameService } from '@yourorg/universal-name-service';
+import { PNSClient } from '@miracleorg/pns-sdk';
+import { JsonRpcProvider, Wallet } from 'ethers';
 
 // Initialize SDK
-const uns = new UniversalNameService({
-  contractAddress: '0x6032E825069f5C057aFDE606B8BCA9de84742C3D',
-  pushChainClient,
+const pns = new PNSClient({
+  contractAddress: '0x2Fa83bc81c688D5edc760D4cBB60320501Ae67eC',
+  provider: new JsonRpcProvider('https://rpc.push.org'),
+  signer: new Wallet(process.env.PRIVATE_KEY, provider),
 });
 
 // Check availability
-const isAvailable = await uns.isNameAvailable('alice');
+const availability = await pns.isNameAvailable('alice');
 
-if (isAvailable) {
+if (availability.available) {
   // Register name
-  const tx = await uns.registerName('alice', {
-    duration: 31536000, // 1 year
-  });
+  const tx = await pns.register({ name: 'alice' });
+  await tx.wait();
   
   console.log('Registered!', tx.hash);
 }
@@ -244,21 +234,22 @@ if (isAvailable) {
 ### Resolve Name to Address
 ```typescript
 // Resolve name
-const address = await uns.resolveName('alice');
+const address = await pns.resolve('alice');
 console.log('alice.push resolves to:', address);
 ```
 
 ### Get All Names for Address
 ```typescript
 // Get names owned by address
-const names = await uns.getNamesForAddress('0x...');
-console.log('Found names:', names.map(n => n.name));
+const names = await pns.getNamesByOwner('0x...');
+console.log('Found names:', names);
 ```
 
 ### Update Metadata
 ```typescript
 // Update profile info
-await uns.updateMetadata('alice', {
+await pns.setMetadata({
+  name: 'alice',
   avatar: 'https://example.com/avatar.png',
   email: 'alice@example.com',
   twitter: '@alice',
@@ -271,18 +262,17 @@ await uns.updateMetadata('alice', {
 
 For developers looking to integrate PNS into their applications, we provide an official SDK:
 ```bash
-npm i @miracleorg/universal-name-service ethers
+npm i @miracleorg/pns-sdk ethers
 ```
 
 **SDK Features:**
 - ✅ Full TypeScript support
-- ✅ Tree-shakeable
-- ✅ Batch operations
-- ✅ Caching layer
-- ✅ Event subscriptions
-- ✅ React hooks
+- ✅ Multi-chain resolution
+- ✅ Metadata management
+- ✅ Chain statistics
+- ✅ Comprehensive utilities
 
-**Documentation**: [SDK Documentation](https://www.npmjs.com/package/@miracleorg/universal-name-service)
+**Documentation**: [SDK Documentation](https://www.npmjs.com/package/@miracleorg/pns-sdk)
 
 
 ## 🤝 Contributing
@@ -310,7 +300,7 @@ We welcome contributions!.
 - [x] Basic name registration
 - [x] Metadata support
 - [x] Transfer & renewal
-- [x] Firebase caching
+
 - [x] Cross-chain compatibility
 
 ### Phase 2: Enhancement (Q1 2025)

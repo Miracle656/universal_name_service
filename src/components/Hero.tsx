@@ -1,94 +1,210 @@
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useRef, useState } from 'react';
+import { gsap } from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Search, Sparkles } from 'lucide-react';
-import { usePushWalletContext, PushUI } from '@pushchain/ui-kit';
-import PNSLogo from '../../public/PNS_Logo.png'
+import { Button } from '@/components/ui/button';
+
+gsap.registerPlugin(ScrollTrigger);
 
 interface HeroProps {
   onSearch: (name: string) => void;
 }
 
-export const Hero = ({ onSearch }: HeroProps) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const { connectionStatus } = usePushWalletContext();
-  const isConnected = connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
+// Glowing name cards data with both scattered and vertical positions
+export const HERO_NAMES = [
+  {
+    name: 'alice.push',
+    image: '/assets/pnsglow/Group 16.png',
+    color: '#F0B90B',
+    heroPos: { top: '22%', left: '22%' },
+    verticalIndex: 0
+  },
+  {
+    name: 'bob.push',
+    image: '/assets/pnsglow/Group 17.png',
+    color: '#0052FF',
+    heroPos: { top: '22%', left: '78%' },
+    verticalIndex: 1
+  },
+  {
+    name: 'john.push',
+    image: '/assets/pnsglow/Group 18.png',
+    color: '#5b5b94',
+    heroPos: { top: '50%', left: '82%' },
+    verticalIndex: 2
+  },
+  {
+    name: 'smith.push',
+    image: '/assets/pnsglow/Group 19.png',
+    color: '#79797a',
+    heroPos: { top: '78%', left: '78%' },
+    verticalIndex: 3
+  },
+  {
+    name: 'miracle.push',
+    image: '/assets/pnsglow/Group 20.png',
+    color: '#28A0F0',
+    heroPos: { top: '78%', left: '22%' },
+    verticalIndex: 4
+  },
+];
 
-  const handleSearch = (e: React.FormEvent) => {
+// Floating coins data
+const FLOATING_COINS = [
+  { image: '/assets/unicoins/Group 21.png', position: { top: '10%', left: '5%' }, delay: 0 },
+  { image: '/assets/unicoins/Group 22.png', position: { top: '25%', left: '2%' }, delay: 0.5 },
+  { image: '/assets/unicoins/Group 23.png', position: { top: '40%', left: '5%' }, delay: 1 },
+  { image: '/assets/unicoins/Group 24.png', position: { top: '60%', left: '2%' }, delay: 1.5 },
+  { image: '/assets/unicoins/Group 25.png', position: { top: '80%', left: '5%' }, delay: 2 },
+  { image: '/assets/unicoins/Group 26.png', position: { top: '90%', left: '10%' }, delay: 2.5 },
+];
+
+export const Hero = ({ onSearch }: HeroProps) => {
+  const [searchValue, setSearchValue] = useState('');
+  const heroRef = useRef<HTMLDivElement>(null);
+  const coinsRef = useRef<(HTMLImageElement | null)[]>([]);
+  const cardsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      // Floating animation for coins
+      coinsRef.current.forEach((coin, index) => {
+        if (coin) {
+          gsap.to(coin, {
+            y: '+=30',
+            duration: 2 + index * 0.3,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+            delay: FLOATING_COINS[index].delay,
+          });
+
+          gsap.to(coin, {
+            rotation: 360,
+            duration: 10 + index * 2,
+            repeat: -1,
+            ease: 'none',
+          });
+        }
+      });
+
+      // Entrance animation for Hero names
+      cardsRef.current.forEach((card, index) => {
+        if (card) {
+          gsap.fromTo(card,
+            { opacity: 0, scale: 0.5 },
+            {
+              opacity: 1,
+              scale: 1,
+              duration: 1,
+              delay: 0.5 + index * 0.1,
+              ease: 'back.out(1.7)',
+            });
+        }
+      });
+
+      // Fade out names on scroll (bidirectional with scrub)
+      cardsRef.current.forEach((card) => {
+        if (card) {
+          gsap.fromTo(card,
+            { opacity: 1, scale: 1 },
+            {
+              scrollTrigger: {
+                trigger: heroRef.current,
+                start: 'bottom bottom',
+                end: 'bottom top',
+                scrub: 1,
+              },
+              opacity: 0,
+              scale: 0.8,
+              ease: 'none',
+            });
+        }
+      });
+
+    }, heroRef);
+
+    return () => ctx.revert();
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchQuery.trim()) {
-      onSearch(searchQuery.trim());
+    if (searchValue.trim()) {
+      onSearch(searchValue.trim());
     }
   };
 
   return (
-    <section className="relative overflow-hidden bg-gradient-hero py-20 sm:py-32">
-      <div className="absolute inset-0 bg-grid-pattern opacity-5" />
-      
-      <div className="container relative">
-        <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary">
-            <Sparkles className="h-4 w-4" />
-            Universal Name Service on Push Chain
-          </div>
+    <section ref={heroRef} className="relative min-h-screen flex items-center justify-center overflow-hidden bg-black pt-20">
+      {/* Floating Coins */}
+      {FLOATING_COINS.map((coin, index) => (
+        <img
+          key={index}
+          ref={(el) => (coinsRef.current[index] = el)}
+          src={coin.image}
+          alt="Coin"
+          className="absolute w-16 h-16 md:w-20 md:h-20 opacity-60"
+          style={coin.position}
+        />
+      ))}
 
-          <h1 className="mb-6 text-5xl font-bold tracking-tight sm:text-6xl lg:text-7xl">
-            Your Identity Across
-            <span className="block bg-gradient-primary bg-clip-text text-transparent">
-              Every Chain
-            </span>
-          </h1>
+      {/* Main Content */}
+      <div ref={containerRef} className="relative z-10 text-center px-4 max-w-4xl mx-auto">
+        <h1 className="text-5xl md:text-6xl lg:text-7xl font-black text-white mb-6 text-display">
+          Your Identity Across
+          <br />
+          <span className="text-glow-pink">Every Chain</span>
+        </h1>
+        <p className="text-lg md:text-xl text-gray-400 mb-12 font-light">
+          Universal names for the decentralized web
+        </p>
 
-          <p className="mb-10 text-lg text-muted-foreground sm:text-xl">
-            Register your unique .push name from any chain. Deployed once on Push Chain, accessible from Ethereum, Solana, and more.
-            One name, unlimited possibilities.
-          </p>
-
-          <form onSubmit={handleSearch} className="mx-auto max-w-2xl">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+        {/* Search Bar Container */}
+        <div className="relative max-w-2xl mx-auto">
+          {/* Search Bar */}
+          <form onSubmit={handleSubmit} className="relative z-20">
+            <div className="relative flex items-center bg-white/5 backdrop-blur-lg rounded-full border-2 border-[#D548EC]/30 overflow-hidden glow-pink">
               <Input
                 type="text"
-                placeholder="Search for your perfect name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-14 pl-12 pr-32 text-lg shadow-glow-primary transition-all focus:shadow-glow-accent"
+                placeholder="Search for your name..."
+                value={searchValue}
+                onChange={(e) => setSearchValue(e.target.value)}
+                className="flex-1 border-0 bg-transparent px-8 py-6 text-lg font-medium text-white placeholder:text-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0"
               />
               <Button
                 type="submit"
-                className="absolute right-2 top-1/2 -translate-y-1/2 bg-gradient-primary hover:opacity-90"
-                disabled={!isConnected}
+                size="lg"
+                className="absolute right-2 bg-[#D548EC] hover:bg-[#e76ff5] text-white rounded-full px-8 py-6 h-auto glow-pink"
               >
-                Search
+                <Search className="w-5 h-5" />
               </Button>
             </div>
           </form>
-
-          {!isConnected && (
-            <p className="mt-4 text-sm text-muted-foreground">
-              Connect your wallet to search and register names
-            </p>
-          )}
-
-          <div className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-3">
-            <div className="rounded-lg border border-border bg-card p-6">
-              <div className="mb-2 text-3xl font-bold text-primary">∞</div>
-              <div className="font-semibold">Multi-Chain</div>
-              <div className="text-sm text-muted-foreground">Connect all your addresses</div>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-6">
-              <div className="mb-2 text-3xl font-bold text-primary">365</div>
-              <div className="font-semibold">Days Per Year</div>
-              <div className="text-sm text-muted-foreground">Renewable registration</div>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-6">
-              <div className="mb-2 text-3xl font-bold text-primary">100%</div>
-              <div className="font-semibold">Ownership</div>
-              <div className="text-sm text-muted-foreground">You control your name</div>
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* Absolute Name Cards (Will fade out on scroll) */}
+      {HERO_NAMES.map((item, index) => (
+        <div
+          key={item.name}
+          ref={(el) => (cardsRef.current[index] = el)}
+          data-name-card={index}
+          className="absolute z-0 pointer-events-none"
+          style={{
+            top: item.heroPos.top,
+            left: item.heroPos.left,
+            transform: 'translate(-50%, -50%)' // Center on coordinate
+          }}
+        >
+          <img
+            src={item.image}
+            alt={item.name}
+            className="w-48 md:w-64 h-auto drop-shadow-2xl"
+          />
+        </div>
+      ))}
     </section>
   );
 };

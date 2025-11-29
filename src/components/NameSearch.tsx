@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { gsap } from 'gsap';
 import { usePushWalletContext, usePushChainClient, PushUI } from '@pushchain/ui-kit';
 import { PushChain } from '@pushchain/core';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, CheckCircle2, XCircle, Crown, Calendar, User, Network, Info } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, Crown, Calendar, User } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatEther, Contract, BrowserProvider } from 'ethers';
+import { formatEther, Contract } from 'ethers';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '@/lib/contract';
-import { ethers, getAddress } from 'ethers';
-import { storeNameRegistration } from '../firebase/services';
+import { ethers } from 'ethers';
 
 interface NameSearchProps {
   searchName: string;
@@ -17,7 +17,7 @@ interface NameSearchProps {
 }
 
 export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) => {
-  const { connectionStatus } = usePushWalletContext();
+  const { connectionStatus, universalAccount } = usePushWalletContext();
   const { pushChainClient } = usePushChainClient();
   const [loading, setLoading] = useState(false);
   const [registering, setRegistering] = useState(false);
@@ -28,42 +28,36 @@ export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) =
     expiresAt?: bigint;
     isPremium?: boolean;
     fee?: string;
+    rawFee?: bigint;
   } | null>(null);
-  const [originInfo, setOriginInfo] = useState<{
-    chainNamespace: string;
-    chainId: string;
-    isUEA: boolean;
-  } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const isConnected = connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
 
-  // Initialize contract when connected
+  useEffect(() => {
+    if (cardRef.current && nameData) {
+      gsap.from(cardRef.current, {
+        y: 50,
+        opacity: 0,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+    }
+  }, [nameData]);
+
+  const PUSH_CHAIN_RPC = "https://evm.donut.rpc.push.org/";
+
+  const getProvider = () => {
+    return new ethers.JsonRpcProvider(PUSH_CHAIN_RPC);
+  };
+
   useEffect(() => {
     const initContract = async () => {
       if (isConnected && pushChainClient) {
         try {
-          // Use JsonRpcProvider for read operations on Push Chain
-          const provider = new ethers.JsonRpcProvider('https://evm.rpc-testnet-donut-node1.push.org/');
-          // For write operations, we'll use pushChainClient.universal.sendTransaction
-          const contractInstance = new Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-
+          const provider = getProvider();
+          const contractInstance = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
           setContract(contractInstance);
-
-          try {
-            const origin = await contractInstance.getMyOrigin();
-            setOriginInfo({
-              chainNamespace: origin[0].chainNamespace,
-              chainId: origin[0].chainId,
-              isUEA: origin[1],
-            });
-
-            const displayChain = origin[1]
-              ? `${origin[0].chainNamespace}:${origin[0].chainId}`
-              : 'Push Chain (Native)';
-            console.log('Connected from:', displayChain);
-          } catch (err) {
-            console.log('Could not fetch origin info:', err);
-          }
         } catch (error) {
           console.error('Error initializing contract:', error);
           toast.error('Failed to connect to contract');
@@ -71,7 +65,6 @@ export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) =
         }
       } else {
         setContract(null);
-        setOriginInfo(null);
       }
     };
     initContract();
@@ -90,6 +83,7 @@ export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) =
         setNameData({
           available: true,
           fee: formatEther(fee),
+          rawFee: fee,
         });
       } else {
         const record = await contract.getNameRecord(searchName);
@@ -102,54 +96,61 @@ export const NameSearch = ({ searchName, onRegisterSuccess }: NameSearchProps) =
       }
     } catch (error: any) {
       console.error('Error checking name:', error);
-      if (error.code === 'BAD_DATA' || error.message?.includes('could not decode')) {
-        toast.error('Please ensure you are connected to the Push Network');
-      } else {
-        toast.error('Failed to check name availability');
-      }
+      toast.error('Failed to check name availability');
     } finally {
       setLoading(false);
     }
   };
 
   const handleRegister = async () => {
-    if (!contract || !nameData?.fee || !pushChainClient) return;
+    if (!contract || !nameData?.rawFee || !pushChainClient) return;
 
     setRegistering(true);
     try {
-      const data = PushChain.utils.helpers.encodeTxData({
-        abi: CONTRACT_ABI,
-        functionName: 'register',
-        args: [searchName],
-      });
+      // Check Universal Account balance on Push Chain
+      if (contract) {
+        const provider = contract.runner?.provider;
+        if (provider) {
+          // Extract EVM address from CAIP-10 if needed, or use the account directly if it's already an address
+          // pushChainClient.universal.account is likely CAIP-10 (e.g., eip155:1:0x...)
+          // But for the provider check, we need the EVM address.
+          // The contract runner is on Push Chain, so we can use the wallet address.
+          // However, pushChainClient.universal.account might be the *signer* address, not the UA address?
+          // Actually, for cross-chain, the UA address is deterministic.
+          // Let's rely on the fact that if the user is connected, we can try to get the balance of the account we are using.
 
-      const valueInWei = PushChain.utils.helpers.parseUnits(nameData.fee, 18);
+          // Better approach: Just try to get the balance of the current user address (which is the UA address in the context of the dApp).
+          const balance = await provider.getBalance(pushChainClient.universal.account.split(':').pop() || '');
+
+          if (balance < nameData.rawFee) {
+            toast.error(`Insufficient funds in Universal Account. You need ${formatEther(nameData.rawFee)} PUSH on Push Chain.`);
+            console.error('Universal Account Balance:', formatEther(balance), 'Required:', formatEther(nameData.rawFee));
+            setRegistering(false);
+            return;
+          }
+        }
+      }
+
+      const contractInterface = new ethers.Interface(CONTRACT_ABI);
+      const data = contractInterface.encodeFunctionData('register', [searchName]);
+
+      // Temporarily using exact fee to debug
+      const bufferedFee = nameData.rawFee;
+
+      console.log('🔍 Debug sendTransaction params:');
+      console.log('CONTRACT_ADDRESS:', CONTRACT_ADDRESS);
+      console.log('bufferedFee:', bufferedFee.toString());
+      console.log('data:', data);
+      console.log('data length:', data.length);
 
       const tx = await pushChainClient.universal.sendTransaction({
         to: CONTRACT_ADDRESS,
-        value: valueInWei,
-        data: data,
+        value: bufferedFee,
+        data: data as `0x${string}`,
       });
 
       toast.success('Registration transaction submitted');
       await tx.wait();
-
-try {
-  await storeNameRegistration({
-    name: searchName,
-    owner: getAddress(pushChainClient.universal.account),
-    expiresAt: new Date(Date.now() + 31536000000), // 1 year
-    isPremium: nameData.isPremium || false,
-    nameHash: await contract.getNameHash(searchName),
-    registeredAt: new Date(),
-    transactionHash: tx.hash,
-    chainId: pushChainClient.universal.origin?.chain || 'push-chain',
-  });
-  console.log('✅ Stored in Firebase');
-} catch (err) {
-  console.warn('Firebase storage failed:', err);
-}
-
       toast.success('Name registered successfully!');
       onRegisterSuccess();
     } catch (error) {
@@ -160,7 +161,6 @@ try {
     }
   };
 
-  // Trigger check when searchName or contract changes
   useEffect(() => {
     if (searchName && contract && !loading) {
       setNameData(null);
@@ -170,134 +170,110 @@ try {
 
   if (!searchName) return null;
 
-  const getChainDisplayName = (namespace: string, chainId: string) => {
-    if (namespace === 'push') return 'Push Chain';
-    if (namespace === 'eip155') {
-      if (chainId === '1') return 'Ethereum Mainnet';
-      if (chainId === '11155111') return 'Ethereum Sepolia';
-      return `Ethereum (${chainId})`;
-    }
-    if (namespace === 'solana') {
-      if (chainId === '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp') return 'Solana Mainnet';
-      if (chainId === 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1') return 'Solana Devnet';
-      return `Solana (${chainId})`;
-    }
-    return `${namespace}:${chainId}`;
-  };
-
   return (
-    <div id="search" className="container py-12">
-      {isConnected && (
-        <div className="mb-4 mx-auto max-w-2xl space-y-3">
-          {originInfo && (
-            <Badge variant="outline" className="gap-2">
-              <Network className="h-3 w-3" />
-              Connected from: {getChainDisplayName(originInfo.chainNamespace, originInfo.chainId)}
-            </Badge>
-          )}
-          <div className="rounded-lg border border-blue-500/50 bg-blue-50 p-4 dark:bg-blue-950">
-            <div className="flex gap-3">
-              <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-blue-800 dark:text-blue-200">
-                <p className="font-medium mb-1">Universal Registration</p>
-                <p className="text-xs opacity-90">
-                  This contract is deployed only on Push Chain, but you can register from any supported chain (Ethereum, Solana, etc.).
-                  Your origin chain is automatically detected and stored with your name.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+    <section id="search" className="py-20 bg-black">
+      <div className="container mx-auto px-4">
+        <div ref={cardRef} className="max-w-2xl mx-auto">
+          <Card className="bg-black border-2 border-[#D548EC]/30 shadow-2xl rounded-3xl overflow-hidden glow-pink">
+            <CardHeader className="bg-gradient-to-r from-[#D548EC]/20 to-[#D548EC]/10 border-b border-[#D548EC]/30">
+              <CardTitle className="text-3xl font-black flex items-center justify-between text-white">
+                <span className="text-glow-pink">{searchName}.push</span>
+                {nameData?.isPremium && (
+                  <Badge className="bg-[#D548EC] text-white border-0 glow-pink">
+                    <Crown className="h-4 w-4 mr-1" />
+                    Premium
+                  </Badge>
+                )}
+              </CardTitle>
+            </CardHeader>
 
-      <Card className="mx-auto max-w-2xl shadow-lg">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-2xl">
-            {searchName}.push
-            {nameData?.isPremium && (
-              <Badge variant="secondary" className="gap-1">
-                <Crown className="h-3 w-3" />
-                Premium
-              </Badge>
-            )}
-          </CardTitle>
-          <CardDescription>Name registration details</CardDescription>
-        </CardHeader>
+            <CardContent className="p-8">
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                  <Loader2 className="h-12 w-12 animate-spin text-[#D548EC]" />
+                  <p className="text-gray-400 font-medium">Checking availability...</p>
+                </div>
+              ) : nameData ? (
+                <>
+                  {nameData.available ? (
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 text-[#D548EC] bg-[#D548EC]/10 p-4 rounded-2xl border border-[#D548EC]/30">
+                        <CheckCircle2 className="h-6 w-6" />
+                        <span className="font-bold text-lg">Available for registration</span>
+                      </div>
 
-        <CardContent className="space-y-6">
-          {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : nameData ? (
-            <>
-              {nameData.available ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-green-600">
-                    <CheckCircle2 className="h-5 w-5" />
-                    <span className="font-semibold">Available for registration</span>
-                  </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white/5 rounded-2xl p-6 border border-[#D548EC]/20">
+                          <div className="text-sm text-gray-400 mb-2">Registration Fee</div>
+                          <div className="text-3xl font-black text-[#D548EC]">{nameData.fee} ETH</div>
+                        </div>
+                        <div className="bg-white/5 rounded-2xl p-6 border border-[#D548EC]/20">
+                          <div className="text-sm text-gray-400 mb-2">Duration</div>
+                          <div className="text-3xl font-black text-[#D548EC]">1 Year</div>
+                        </div>
+                      </div>
 
-                  <div className="rounded-lg border border-border bg-muted/50 p-4">
-                    <div className="mb-2 text-sm text-muted-foreground">Registration Fee</div>
-                    <div className="text-2xl font-bold">{nameData.fee} ETH</div>
-                    <div className="mt-1 text-xs text-muted-foreground">Valid for 1 year</div>
-                  </div>
-
-                  {!isConnected ? (
-                    <div className="rounded-lg border border-yellow-500/50 bg-yellow-50 p-4 text-center dark:bg-yellow-950">
-                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                        Please connect your wallet to register this name
-                      </p>
+                      {!isConnected ? (
+                        <div className="bg-yellow-500/10 border-2 border-yellow-500/30 rounded-2xl p-6 text-center">
+                          <p className="text-yellow-500 font-medium">
+                            Please connect your wallet to register this name
+                          </p>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={handleRegister}
+                          disabled={registering}
+                          className="w-full h-14 bg-[#D548EC] hover:bg-[#e76ff5] text-white text-lg font-bold rounded-2xl shadow-lg glow-pink border-0"
+                        >
+                          {registering ? (
+                            <>
+                              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                              Registering...
+                            </>
+                          ) : (
+                            'Register Name'
+                          )}
+                        </Button>
+                      )}
                     </div>
                   ) : (
-                    <Button
-                      onClick={handleRegister}
-                      disabled={registering}
-                      className="w-full bg-gradient-primary hover:opacity-90 text-lg font-semibold"
-                      size="lg"
-                    >
-                      {registering ? (
-                        <>
-                          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                          Registering...
-                        </>
-                      ) : (
-                        'Register Name'
-                      )}
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-red-600">
-                    <XCircle className="h-5 w-5" />
-                    <span className="font-semibold">Not available</span>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-sm">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-muted-foreground">Owner:</span>
-                      <code className="rounded bg-muted px-2 py-1 text-xs">
-                        {nameData.owner?.slice(0, 6)}...{nameData.owner?.slice(-4)}
-                      </code>
-                    </div>
-
-                    {nameData.expiresAt && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-muted-foreground">Expires:</span>
-                        <span>{new Date(Number(nameData.expiresAt) * 1000).toLocaleDateString()}</span>
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 text-red-500 bg-red-500/10 p-4 rounded-2xl border border-red-500/30">
+                        <XCircle className="h-6 w-6" />
+                        <span className="font-bold text-lg">Not available</span>
                       </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </>
-          ) : null}
-        </CardContent>
-      </Card>
-    </div>
+
+                      <div className="bg-white/5 rounded-2xl p-6 space-y-4 border border-[#D548EC]/20">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-gray-400">
+                            <User className="h-5 w-5" />
+                            <span className="font-medium">Owner</span>
+                          </div>
+                          <code className="bg-black px-3 py-1 rounded-lg text-sm font-mono text-[#D548EC] border border-[#D548EC]/30">
+                            {nameData.owner?.slice(0, 6)}...{nameData.owner?.slice(-4)}
+                          </code>
+                        </div>
+
+                        {nameData.expiresAt && (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-gray-400">
+                              <Calendar className="h-5 w-5" />
+                              <span className="font-medium">Expires</span>
+                            </div>
+                            <span className="font-bold text-white">
+                              {new Date(Number(nameData.expiresAt) * 1000).toLocaleDateString()}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </section>
   );
 };

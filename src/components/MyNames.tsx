@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   usePushWalletContext,
   usePushChainClient,
@@ -15,11 +15,7 @@ import {
 import {
   Contract,
   JsonRpcProvider,
-  id,
-  ethers,
   getAddress,
-  zeroPadValue,
-  Log,
 } from "ethers";
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
 import { Button } from "@/components/ui/button";
@@ -27,7 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Crown, Edit, Send, RefreshCw, Calendar, Loader2 } from "lucide-react";
+import { Crown, Edit, Send, RefreshCw, Calendar, Loader2, ExternalLink } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -37,7 +33,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { getNamesForAddress, storeNameRegistration } from "../firebase/services";
+import gsap from "gsap";
 
 interface NameData {
   name: string;
@@ -78,6 +74,8 @@ export const MyNames = () => {
   const [updating, setUpdating] = useState(false);
   const [fetchProgress, setFetchProgress] = useState("");
 
+  const containerRef = useRef(null);
+
   const isConnected =
     connectionStatus === PushUI.CONSTANTS.CONNECTION.STATUS.CONNECTED;
 
@@ -86,8 +84,6 @@ export const MyNames = () => {
     const initContract = async () => {
       if (isConnected && pushChainClient) {
         try {
-          // Always use Push Chain RPC for contract operations since names are stored on Push Chain
-          // regardless of which wallet (Ethereum/Solana/Push) the user connected with
           const provider = new JsonRpcProvider(
             "https://evm.rpc-testnet-donut-node1.push.org/"
           );
@@ -98,16 +94,8 @@ export const MyNames = () => {
           );
           setContract(contractInstance);
 
-          // Get user's address
           const address = pushChainClient.universal.account;
           setUserAddress(address);
-
-          console.log("Contract initialized for address:", address);
-          console.log(
-            "Origin wallet:",
-            pushChainClient.universal.origin?.address
-          );
-          console.log("Universal account:", pushChainClient.universal.account);
         } catch (error) {
           console.error("Error initializing contract:", error);
           setContract(null);
@@ -132,67 +120,68 @@ export const MyNames = () => {
     telegram: metadata?.telegram || "",
   });
 
-  // Fetch user's names when contract and address are available
+  // Fetch user's names
   useEffect(() => {
     const fetchMyNames = async () => {
-  if (!contract || !userAddress || !pushChainClient) return;
+      if (!contract || !userAddress || !pushChainClient) return;
 
-  setLoading(true);
-  setFetchProgress("Loading your names...");
+      setLoading(true);
+      setFetchProgress("Loading your names...");
 
-  try {
-    const normalizedUEA = getAddress(pushChainClient.universal.account);
+      try {
+        const normalizedUEA = getAddress(pushChainClient.universal.account);
 
-    // ✅ SUPER SIMPLE: Just call the contract function!
-    const [names, hashes, total] = await contract.getNamesByOwner(
-      normalizedUEA,
-      0,  // offset
-      100 // limit - get first 100 names
-    );
+        const names = await contract.getNamesByOwner(normalizedUEA);
 
-    console.log(`Found ${total} names`);
+        const namesData: NameData[] = [];
 
-    // Process the names
-    const namesData: NameData[] = [];
+        for (let i = 0; i < names.length; i++) {
+          const name = names[i];
+          const nameHash = await contract.getNameHash(name);
+          const record = await contract.getNameRecord(name);
+          const expiresAt = new Date(Number(record.expiresAt) * 1000);
 
-    for (let i = 0; i < names.length; i++) {
-      const name = names[i];
-      const record = await contract.getNameRecord(name);
-      const expiresAt = new Date(Number(record.expiresAt) * 1000);
+          if (expiresAt > new Date()) {
+            let nameMetadata = null;
+            try {
+              const metadata = await contract.getMetadata(name);
+              nameMetadata = normalizeMetadata(metadata);
+            } catch (err) {
+              nameMetadata = normalizeMetadata(null);
+            }
 
-      // Only include non-expired names
-      if (expiresAt > new Date()) {
-        // Fetch metadata
-        let nameMetadata = null;
-        try {
-          const metadata = await contract.getMetadata(name);
-          nameMetadata = normalizeMetadata(metadata);
-        } catch (err) {
-          nameMetadata = normalizeMetadata(null);
+            namesData.push({
+              name,
+              expiresAt,
+              isPremium: Boolean(record.isPremium),
+              nameHash: nameHash,
+              metadata: nameMetadata,
+            });
+          }
         }
 
-        namesData.push({
-          name,
-          expiresAt,
-          isPremium: Boolean(record.isPremium),
-          nameHash: hashes[i],
-          metadata: nameMetadata,
-        });
+        setMyNames(namesData);
+        setFetchProgress("");
+      } catch (error) {
+        console.error("Error fetching names:", error);
+        toast.error("Failed to fetch your names");
+      } finally {
+        setLoading(false);
       }
-    }
-
-    setMyNames(namesData);
-    setFetchProgress("");
-  } catch (error) {
-    console.error("Error fetching names:", error);
-    toast.error("Failed to fetch your names");
-  } finally {
-    setLoading(false);
-  }
-};
+    };
 
     fetchMyNames();
   }, [contract, userAddress]);
+
+  // Animate cards when loaded
+  useEffect(() => {
+    if (!loading && myNames.length > 0) {
+      gsap.fromTo(".name-card",
+        { y: 30, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.5, stagger: 0.1, ease: "power2.out" }
+      );
+    }
+  }, [loading, myNames]);
 
   const handleUpdateMetadata = async () => {
     if (!contract || !selectedName || !pushChainClient) return;
@@ -253,8 +242,6 @@ export const MyNames = () => {
       await tx.wait();
       toast.success("Name transferred successfully!");
       setTransferAddress("");
-
-      // Refresh names list
       window.location.reload();
     } catch (error) {
       console.error("Error transferring name:", error);
@@ -284,8 +271,6 @@ export const MyNames = () => {
       toast.success("Renewing name...");
       await tx.wait();
       toast.success("Name renewed successfully!");
-
-      // Refresh names list
       window.location.reload();
     } catch (error) {
       console.error("Error renewing name:", error);
@@ -295,11 +280,15 @@ export const MyNames = () => {
 
   if (!isConnected) {
     return (
-      <section id="my-names" className="container py-12">
-        <Card className="mx-auto max-w-2xl text-center">
-          <CardContent className="py-12">
-            <p className="text-muted-foreground">
-              Connect your wallet to view your names
+      <section id="my-names" className="container py-20 min-h-[60vh] flex items-center justify-center">
+        <Card className="mx-auto max-w-2xl text-center bg-card/50 backdrop-blur-xl border-white/10 shadow-2xl">
+          <CardContent className="py-16">
+            <div className="mb-6 mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <Crown className="w-8 h-8 text-primary" />
+            </div>
+            <h2 className="text-2xl font-bold mb-4">Connect Your Wallet</h2>
+            <p className="text-muted-foreground mb-8 max-w-md mx-auto">
+              Connect your wallet to view and manage your registered Push names.
             </p>
           </CardContent>
         </Card>
@@ -309,72 +298,55 @@ export const MyNames = () => {
 
   if (loading) {
     return (
-      <section id="my-names" className="container py-12">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold">My Names</h2>
-          <p className="text-muted-foreground">
-            Manage your registered Push names
+      <section id="my-names" className="container py-20">
+        <div className="mb-12 text-center">
+          <h2 className="text-4xl font-bold mb-4">My Names</h2>
+          <p className="text-muted-foreground">Manage your digital identity</p>
+        </div>
+        <div className="flex flex-col items-center justify-center py-20">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+          <p className="text-lg font-medium text-muted-foreground animate-pulse">
+            {fetchProgress || "Loading your names..."}
           </p>
         </div>
-        <Card className="text-center">
-          <CardContent className="py-12">
-            <Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" />
-            <p className="mt-4 text-muted-foreground">
-              {fetchProgress || "Loading your names..."}
-            </p>
-            {fetchProgress && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                This may take a moment for external wallets as we search through
-                the blockchain history
-              </p>
-            )}
-          </CardContent>
-        </Card>
       </section>
     );
   }
 
   return (
-    <section id="my-names" className="container py-12">
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold">My Names</h2>
-        <p className="text-muted-foreground">
-          Manage your registered Push names
-        </p>
-        {isConnected && pushChainClient && (
-          <div className="mt-4 p-3 bg-muted/50 rounded-lg text-sm">
-            <p className="text-muted-foreground">
-              <strong>Connected:</strong> {userAddress}
-            </p>
-            {pushChainClient.universal.origin && (
-              <p className="text-muted-foreground">
-                <strong>Origin Wallet:</strong>{" "}
-                {pushChainClient.universal.origin.address}
-                <span className="ml-2 text-xs bg-secondary px-2 py-1 rounded">
-                  {pushChainClient.universal.origin.chain || "External"}
-                </span>
-              </p>
-            )}
-            {pushChainClient.universal.origin &&
-              pushChainClient.universal.account !==
-                pushChainClient.universal.origin.address && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  ℹ️ External wallet detected. Using optimized querying for
-                  better performance.
-                </p>
-              )}
+    <section ref={containerRef} id="my-names" className="container py-20 min-h-screen">
+      <div className="mb-12 flex flex-col md:flex-row items-center justify-between gap-6">
+        <div>
+          <h2 className="text-4xl font-bold mb-2">My Names</h2>
+          <p className="text-muted-foreground">
+            Manage your registered Push names
+          </p>
+        </div>
+
+        {/* {isConnected && pushChainClient && (
+          <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-full backdrop-blur-sm text-sm flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-muted-foreground">Connected:</span>
+            <span className="font-mono text-primary">
+              {userAddress.slice(0, 6)}...{userAddress.slice(-4)}
+            </span>
           </div>
-        )}
+        )} */}
       </div>
 
       {myNames.length === 0 ? (
-        <Card className="text-center">
-          <CardContent className="py-12">
-            <p className="text-muted-foreground">
-              You don't have any registered names yet
+        <Card className="text-center bg-card/50 backdrop-blur-xl border-white/10">
+          <CardContent className="py-20">
+            <div className="mb-6 mx-auto w-20 h-20 rounded-full bg-white/5 flex items-center justify-center">
+              <Crown className="w-10 h-10 text-muted-foreground/50" />
+            </div>
+            <h3 className="text-2xl font-bold mb-4">No Names Found</h3>
+            <p className="text-muted-foreground mb-8">
+              You don't have any registered names yet.
             </p>
             <Button
-              className="mt-4 bg-gradient-primary"
+              size="lg"
+              className="bg-gradient-primary hover:opacity-90 shadow-lg shadow-primary/20"
               onClick={() => (window.location.href = "/")}
             >
               Register Your First Name
@@ -382,362 +354,192 @@ export const MyNames = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {myNames.map((nameData) => (
             <Card
               key={nameData.name}
-              className="group transition-all hover:shadow-lg"
+              className="name-card group relative overflow-hidden bg-gradient-to-br from-purple-900/40 via-purple-800/30 to-purple-900/40 backdrop-blur-xl border-2 border-purple-500/30 hover:border-purple-400/60 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-500/20 rounded-3xl"
             >
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  {nameData.name}.push
+              {/* Gradient border glow effect */}
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-purple-500/20 via-pink-500/20 to-cyan-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+
+              {/* Circuit pattern background */}
+              <div className="absolute inset-0 opacity-10" style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%239C92AC' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
+              }} />
+
+              <CardContent className="relative p-5 space-y-4">
+                {/* Name Display */}
+                <div className="space-y-1">
+                  <h3 className="text-3xl font-black bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                    @{nameData.name}
+                  </h3>
                   {nameData.isPremium && (
-                    <Badge variant="secondary" className="gap-1">
-                      <Crown className="h-3 w-3" />
+                    <Badge className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 text-yellow-400 border-yellow-500/30 text-xs">
+                      <Crown className="h-3 w-3 mr-1" />
                       Premium
                     </Badge>
                   )}
-                </CardTitle>
-                <CardDescription className="flex items-center gap-2">
-                  <Calendar className="h-3 w-3" />
-                  Expires: {nameData.expiresAt.toLocaleDateString()}
-                </CardDescription>
-              </CardHeader>
+                </div>
 
-              <CardContent className="space-y-3">
-                {/* Display existing metadata if available */}
-                {nameData.metadata && (
-                  <div className="p-3 bg-muted/30 rounded-lg space-y-2">
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                      Current Metadata:
-                    </h4>
-                    {nameData.metadata.avatar && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="font-medium">Avatar:</span>
-                        <img
-                          src={nameData.metadata.avatar}
-                          alt="Avatar"
-                          className="w-8 h-8 rounded-full object-cover border border-border"
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
-                        <span className="truncate text-muted-foreground">
-                          {nameData.metadata.avatar}
-                        </span>
-                      </div>
-                    )}
-                    {nameData.metadata.email && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="font-medium">Email:</span>
-                        <a
-                          href={`mailto:${nameData.metadata.email}`}
-                          className="truncate text-blue-600 hover:text-blue-800 underline"
-                        >
-                          {nameData.metadata.email}
-                        </a>
-                      </div>
-                    )}
-                    {nameData.metadata.url && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="font-medium">Website:</span>
-                        <a
-                          href={nameData.metadata.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="truncate text-blue-600 hover:text-blue-800 underline"
-                        >
-                          {nameData.metadata.url}
-                        </a>
-                      </div>
-                    )}
-                    {nameData.metadata.description && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="font-medium">Description:</span>
-                        <span className="truncate">
-                          {nameData.metadata.description}
-                        </span>
-                      </div>
-                    )}
-                    {(nameData.metadata.twitter ||
-                      nameData.metadata.github ||
-                      nameData.metadata.discord ||
-                      nameData.metadata.telegram) && (
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        {nameData.metadata.twitter && (
-                          <a
-                            href={`https://twitter.com/${nameData.metadata.twitter.replace(
-                              "@",
-                              ""
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
-                          >
-                            Twitter: {nameData.metadata.twitter}
-                          </a>
-                        )}
-                        {nameData.metadata.github && (
-                          <a
-                            href={`https://github.com/${nameData.metadata.github}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-gray-100 text-gray-800 px-2 py-1 rounded hover:bg-gray-200 transition-colors"
-                          >
-                            GitHub: {nameData.metadata.github}
-                          </a>
-                        )}
-                        {nameData.metadata.discord && (
-                          <span className="bg-purple-100 text-purple-800 px-2 py-1 rounded">
-                            Discord: {nameData.metadata.discord}
-                          </span>
-                        )}
-                        {nameData.metadata.telegram && (
-                          <a
-                            href={`https://t.me/${nameData.metadata.telegram.replace(
-                              "@",
-                              ""
-                            )}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200 transition-colors"
-                          >
-                            Telegram: {nameData.metadata.telegram}
-                          </a>
-                        )}
-                      </div>
-                    )}
+                {/* Metadata Badge */}
+                <div className="inline-block px-3 py-1.5 bg-cyan-500/20 border border-cyan-500/30 rounded-full">
+                  <span className="text-cyan-400 text-xs font-medium">
+                    {nameData.metadata?.description || "Default"}
+                  </span>
+                </div>
+
+                {/* Bottom Section: Logos and Expiry */}
+                <div className="flex items-end justify-between pt-2">
+                  {/* Expiry Date */}
+                  <div className="text-white text-xs font-medium">
+                    {nameData.expiresAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </div>
-                )}
 
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full gap-2"
-                      onClick={() => {
-                        setSelectedName(nameData.name);
-                        // Pre-populate metadata if it exists
-                        if (nameData.metadata) {
-                          setMetadata({
-                            avatar: nameData.metadata.avatar || "",
-                            email: nameData.metadata.email || "",
-                            url: nameData.metadata.url || "",
-                            description: nameData.metadata.description || "",
-                            twitter: nameData.metadata.twitter || "",
-                            github: nameData.metadata.github || "",
-                            discord: nameData.metadata.discord || "",
-                            telegram: nameData.metadata.telegram || "",
-                          });
-                        } else {
-                          // Reset metadata if none exists
-                          setMetadata({
-                            avatar: "",
-                            email: "",
-                            url: "",
-                            description: "",
-                            twitter: "",
-                            github: "",
-                            discord: "",
-                            telegram: "",
-                          });
-                        }
-                      }}
-                    >
-                      <Edit className="h-4 w-4" />
-                      Edit Metadata
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-2xl">
-                    <DialogHeader>
-                      <DialogTitle>
-                        Edit Metadata for {selectedName}.push
-                      </DialogTitle>
-                      <DialogDescription>
-                        Update your name's profile information and social links
-                      </DialogDescription>
-                    </DialogHeader>
+                  {/* Logos Stack */}
+                  <div className="flex items-center gap-1.5">
+                    <img
+                      src="/assets/pnslogo.png"
+                      alt="PNS"
+                      className="w-10 h-10 opacity-60"
+                    />
+                    <img
+                      src="/assets/pushlogo 1.png"
+                      alt="Push"
+                      className="w-10 h-10 rounded-lg opacity-80"
+                    />
+                  </div>
+                </div>
 
-                    <Tabs defaultValue="profile" className="w-full">
-                      <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="profile">Profile</TabsTrigger>
-                        <TabsTrigger value="social">Social Links</TabsTrigger>
-                      </TabsList>
+                {/* Action Buttons - Hidden by default, shown on hover */}
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 space-y-3 pt-4 border-t border-purple-500/20">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20 hover:border-purple-400/50 text-purple-200"
+                          onClick={() => {
+                            setSelectedName(nameData.name);
+                            if (nameData.metadata) {
+                              setMetadata({
+                                avatar: nameData.metadata.avatar || "",
+                                email: nameData.metadata.email || "",
+                                url: nameData.metadata.url || "",
+                                description: nameData.metadata.description || "",
+                                twitter: nameData.metadata.twitter || "",
+                                github: nameData.metadata.github || "",
+                                discord: nameData.metadata.discord || "",
+                                telegram: nameData.metadata.telegram || "",
+                              });
+                            }
+                          }}
+                        >
+                          <Edit className="h-4 w-4" />
+                          Edit
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-2xl bg-card/95 backdrop-blur-xl border-white/10">
+                        <DialogHeader>
+                          <DialogTitle>Edit Metadata</DialogTitle>
+                          <DialogDescription>
+                            Update profile for {selectedName}.push
+                          </DialogDescription>
+                        </DialogHeader>
+                        <Tabs defaultValue="profile" className="w-full">
+                          <TabsList className="grid w-full grid-cols-2 bg-black/20">
+                            <TabsTrigger value="profile">Profile</TabsTrigger>
+                            <TabsTrigger value="social">Social Links</TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="profile" className="space-y-4 mt-4">
+                            <div className="space-y-2">
+                              <Label>Avatar URL</Label>
+                              <Input value={metadata.avatar} onChange={e => setMetadata({ ...metadata, avatar: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Description</Label>
+                              <Input value={metadata.description} onChange={e => setMetadata({ ...metadata, description: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Website</Label>
+                              <Input value={metadata.url} onChange={e => setMetadata({ ...metadata, url: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Email</Label>
+                              <Input value={metadata.email} onChange={e => setMetadata({ ...metadata, email: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                          </TabsContent>
+                          <TabsContent value="social" className="space-y-4 mt-4">
+                            <div className="space-y-2">
+                              <Label>Twitter</Label>
+                              <Input value={metadata.twitter} onChange={e => setMetadata({ ...metadata, twitter: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>GitHub</Label>
+                              <Input value={metadata.github} onChange={e => setMetadata({ ...metadata, github: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Discord</Label>
+                              <Input value={metadata.discord} onChange={e => setMetadata({ ...metadata, discord: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Telegram</Label>
+                              <Input value={metadata.telegram} onChange={e => setMetadata({ ...metadata, telegram: e.target.value })} className="bg-black/20 border-white/10" />
+                            </div>
+                          </TabsContent>
+                        </Tabs>
+                        <Button onClick={handleUpdateMetadata} disabled={updating} className="w-full bg-gradient-primary mt-4">
+                          {updating ? "Updating..." : "Save Changes"}
+                        </Button>
+                      </DialogContent>
+                    </Dialog>
 
-                      <TabsContent value="profile" className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="avatar">Avatar URL</Label>
-                          <Input
-                            id="avatar"
-                            value={metadata.avatar}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                avatar: e.target.value,
-                              })
-                            }
-                            placeholder="https://..."
-                          />
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full gap-2 bg-purple-500/10 border-purple-500/30 hover:bg-purple-500/20 hover:border-purple-400/50 text-purple-200"
+                          onClick={() => setSelectedName(nameData.name)}
+                        >
+                          <Send className="h-4 w-4" />
+                          Transfer
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-card/95 backdrop-blur-xl border-white/10">
+                        <DialogHeader>
+                          <DialogTitle>Transfer Name</DialogTitle>
+                          <DialogDescription>Transfer {selectedName}.push to another address</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label>Recipient Address</Label>
+                            <Input
+                              value={transferAddress}
+                              onChange={(e) => setTransferAddress(e.target.value)}
+                              placeholder="0x..."
+                              className="bg-black/20 border-white/10"
+                            />
+                          </div>
+                          <Button onClick={handleTransfer} disabled={!transferAddress} className="w-full bg-gradient-primary">
+                            Transfer Name
+                          </Button>
                         </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="email">Email</Label>
-                          <Input
-                            id="email"
-                            type="email"
-                            value={metadata.email}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                email: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="url">Website</Label>
-                          <Input
-                            id="url"
-                            value={metadata.url}
-                            onChange={(e) =>
-                              setMetadata({ ...metadata, url: e.target.value })
-                            }
-                            placeholder="https://..."
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="description">Description</Label>
-                          <Input
-                            id="description"
-                            value={metadata.description}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                description: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                      </TabsContent>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
 
-                      <TabsContent value="social" className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="twitter">Twitter</Label>
-                          <Input
-                            id="twitter"
-                            value={metadata.twitter}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                twitter: e.target.value,
-                              })
-                            }
-                            placeholder="@username"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="github">GitHub</Label>
-                          <Input
-                            id="github"
-                            value={metadata.github}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                github: e.target.value,
-                              })
-                            }
-                            placeholder="username"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="discord">Discord</Label>
-                          <Input
-                            id="discord"
-                            value={metadata.discord}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                discord: e.target.value,
-                              })
-                            }
-                            placeholder="username#0000"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="telegram">Telegram</Label>
-                          <Input
-                            id="telegram"
-                            value={metadata.telegram}
-                            onChange={(e) =>
-                              setMetadata({
-                                ...metadata,
-                                telegram: e.target.value,
-                              })
-                            }
-                            placeholder="@username"
-                          />
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-
-                    <Button
-                      onClick={handleUpdateMetadata}
-                      disabled={updating}
-                      className="w-full bg-gradient-primary"
-                    >
-                      {updating ? "Updating..." : "Save Changes"}
-                    </Button>
-                  </DialogContent>
-                </Dialog>
-
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="w-full gap-2"
-                      onClick={() => setSelectedName(nameData.name)}
-                    >
-                      <Send className="h-4 w-4" />
-                      Transfer
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Transfer {selectedName}.push</DialogTitle>
-                      <DialogDescription>
-                        Transfer ownership of this name to another address
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="transfer-address">
-                          Recipient Address
-                        </Label>
-                        <Input
-                          id="transfer-address"
-                          value={transferAddress}
-                          onChange={(e) => setTransferAddress(e.target.value)}
-                          placeholder="0x..."
-                        />
-                      </div>
-                      <Button
-                        onClick={handleTransfer}
-                        disabled={!transferAddress}
-                        className="w-full bg-gradient-primary"
-                      >
-                        Transfer Name
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-
-                <Button
-                  variant="outline"
-                  className="w-full gap-2"
-                  onClick={() => handleRenew(nameData.name)}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Renew (1 year)
-                </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full gap-2 bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:border-purple-400/50 text-purple-200"
+                    onClick={() => handleRenew(nameData.name)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Renew (1 year)
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}
