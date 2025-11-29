@@ -16,53 +16,105 @@ export const ConnectedNames = () => {
     const [paths, setPaths] = useState<string[]>([]);
     const [pnsToPushPath, setPnsToPushPath] = useState<string>('');
 
-    // Calculate paths after layout is ready
+    const calculatePaths = () => {
+        if (!pushLogoRef.current || !pnsLogoRef.current || !sectionRef.current) return;
+
+        const pushRect = pushLogoRef.current.getBoundingClientRect();
+        const pnsRect = pnsLogoRef.current.getBoundingClientRect();
+        const sectionRect = sectionRef.current.getBoundingClientRect();
+
+        // Push logo position (center point for connections to names)
+        const pushX = pushRect.left - sectionRect.left + pushRect.width / 2;
+        const pushY = pushRect.top - sectionRect.top + pushRect.height / 2;
+
+        // PNS logo position
+        const pnsX = pnsRect.left - sectionRect.left + pnsRect.width / 2;
+        const pnsY = pnsRect.top - sectionRect.top + pnsRect.height / 2;
+
+        const isVertical = window.innerWidth < 1024; // lg breakpoint
+
+        // Calculate path from PNS to Push
+        let pnsToPushPathString = '';
+        if (isVertical) {
+            // Vertical: PNS (top) -> Push (bottom)
+            const controlY1 = pnsY + (pushY - pnsY) * 0.5;
+            const controlY2 = pnsY + (pushY - pnsY) * 0.5;
+            pnsToPushPathString = `M ${pnsX} ${pnsRect.bottom - sectionRect.top} C ${pnsX} ${controlY1}, ${pushX} ${controlY2}, ${pushX} ${pushRect.top - sectionRect.top}`;
+        } else {
+            // Horizontal: PNS (left) -> Push (right)
+            const controlX1 = pnsX + (pushX - pnsX) * 0.5;
+            const controlX2 = pnsX + (pushX - pnsX) * 0.5;
+            pnsToPushPathString = `M ${pnsRect.right - sectionRect.left} ${pnsY} C ${controlX1} ${pnsY}, ${controlX2} ${pushY}, ${pushRect.left - sectionRect.left} ${pushY}`;
+        }
+        setPnsToPushPath(pnsToPushPathString);
+
+        // Calculate paths from Push to each name
+        const newPaths = namesRef.current.map((nameEl) => {
+            if (!nameEl) return '';
+
+            const nameRect = nameEl.getBoundingClientRect();
+            const nameX = nameRect.left - sectionRect.left + nameRect.width / 2;
+            const nameY = nameRect.top - sectionRect.top + nameRect.height / 2;
+
+            if (isVertical) {
+                // Vertical: Push (top) -> Name (bottom)
+                // Start from bottom of Push logo
+                const startX = pushX;
+                const startY = pushRect.bottom - sectionRect.top;
+
+                // End at left of Name card (or top if stacked tightly, but left looks better for list)
+                // Actually for vertical stack, names are below push.
+                // Let's connect to the top of the name card
+                const endX = nameX;
+                const endY = nameRect.top - sectionRect.top;
+
+                const controlY1 = startY + (endY - startY) * 0.5;
+                const controlY2 = startY + (endY - startY) * 0.5;
+
+                return `M ${startX} ${startY} C ${startX} ${controlY1}, ${endX} ${controlY2}, ${endX} ${endY}`;
+            } else {
+                // Horizontal: Push (left) -> Name (right)
+                // Start from right of Push logo
+                const startX = pushRect.right - sectionRect.left;
+                const startY = pushY;
+
+                // End at left of Name card
+                const endX = nameRect.left - sectionRect.left;
+                const endY = nameY;
+
+                const controlX1 = startX + (endX - startX) * 0.5;
+                const controlX2 = startX + (endX - startX) * 0.5;
+
+                return `M ${startX} ${startY} C ${controlX1} ${startY}, ${controlX2} ${endY}, ${endX} ${endY}`;
+            }
+        });
+
+        setPaths(newPaths);
+    };
+
+    // Calculate paths after layout is ready and on resize
     useEffect(() => {
-        const calculatePaths = () => {
-            if (!pushLogoRef.current || !pnsLogoRef.current || !sectionRef.current) return;
+        calculatePaths();
 
-            const pushRect = pushLogoRef.current.getBoundingClientRect();
-            const pnsRect = pnsLogoRef.current.getBoundingClientRect();
-            const sectionRect = sectionRef.current.getBoundingClientRect();
+        // Use ResizeObserver for robust updates
+        const observer = new ResizeObserver(() => {
+            calculatePaths();
+        });
 
-            // Push logo position (center point for connections to names)
-            const pushX = pushRect.right - sectionRect.left;
-            const pushY = pushRect.top - sectionRect.top + pushRect.height / 2;
+        if (sectionRef.current) {
+            observer.observe(sectionRef.current);
+        }
 
-            // PNS logo position
-            const pnsX = pnsRect.right - sectionRect.left;
-            const pnsY = pnsRect.top - sectionRect.top + pnsRect.height / 2;
-
-            // Calculate path from PNS to Push
-            const pnsToPushControlX1 = pnsX + (pushX - pnsX) * 0.3;
-            const pnsToPushControlX2 = pnsX + (pushX - pnsX) * 0.7;
-            setPnsToPushPath(`M ${pnsX} ${pnsY} C ${pnsToPushControlX1} ${pnsY}, ${pnsToPushControlX2} ${pushY}, ${pushX} ${pushY}`);
-
-            // Calculate paths from Push to each name
-            const newPaths = namesRef.current.map((nameEl) => {
-                if (!nameEl) return '';
-
-                const nameRect = nameEl.getBoundingClientRect();
-                const nameX = nameRect.left - sectionRect.left;
-                const nameY = nameRect.top - sectionRect.top + nameRect.height / 2;
-
-                // Create curved path from Push to name
-                const controlX1 = pushX + (nameX - pushX) * 0.3;
-                const controlX2 = pushX + (nameX - pushX) * 0.7;
-
-                return `M ${pushX} ${pushY} C ${controlX1} ${pushY}, ${controlX2} ${nameY}, ${nameX} ${nameY}`;
-            });
-
-            setPaths(newPaths);
-        };
-
-        // Calculate after a short delay to ensure layout is ready
-        const timer = setTimeout(calculatePaths, 100);
+        // Also add window resize listener as backup
         window.addEventListener('resize', calculatePaths);
 
+        // Initial delay to ensure fonts/images loaded
+        const timer = setTimeout(calculatePaths, 500);
+
         return () => {
-            clearTimeout(timer);
+            observer.disconnect();
             window.removeEventListener('resize', calculatePaths);
+            clearTimeout(timer);
         };
     }, []);
 
@@ -182,7 +234,7 @@ export const ConnectedNames = () => {
         <section
             ref={sectionRef}
             id="connected-names-section"
-            className="relative bg-black min-h-screen flex items-center justify-center py-20"
+            className="relative bg-black min-h-screen flex items-center justify-center py-20 overflow-hidden"
         >
             {/* SVG Canvas for Lines */}
             <svg
@@ -240,10 +292,10 @@ export const ConnectedNames = () => {
                 ))}
             </svg>
 
-            {/* Flex Container - Reversed Order: PNS → Push → Names */}
-            <div className="container mx-auto px-4 flex items-center justify-center gap-32 relative z-10">
+            {/* Flex Container - Responsive: Vertical on mobile, Horizontal on desktop */}
+            <div className="container mx-auto px-4 flex flex-col lg:flex-row items-center justify-center gap-12 lg:gap-32 relative z-10">
 
-                {/* PNS Logo - Leftmost */}
+                {/* PNS Logo */}
                 <div className="flex items-center justify-center">
                     <img
                         ref={pnsLogoRef}
@@ -251,10 +303,11 @@ export const ConnectedNames = () => {
                         alt="PNS Logo"
                         className="w-32 h-32 md:w-40 md:h-40"
                         style={{ filter: 'drop-shadow(0 0 15px rgba(213, 72, 236, 0.4))' }}
+                        onLoad={calculatePaths}
                     />
                 </div>
 
-                {/* Push Logo - Middle */}
+                {/* Push Logo */}
                 <div className="flex items-center justify-center">
                     <img
                         ref={pushLogoRef}
@@ -262,11 +315,12 @@ export const ConnectedNames = () => {
                         alt="Push Logo"
                         className="w-32 h-32 md:w-40 md:h-40 rounded-3xl mix-blend-screen"
                         style={{ filter: 'drop-shadow(0 0 20px rgba(213, 72, 236, 0.6))' }}
+                        onLoad={calculatePaths}
                     />
                 </div>
 
-                {/* Names Column - Rightmost */}
-                <div className="flex flex-col justify-center gap-1 relative">
+                {/* Names Column */}
+                <div className="flex flex-col justify-center gap-4 lg:gap-1 relative">
                     {HERO_NAMES.map((item, index) => (
                         <div
                             key={item.name}
@@ -277,6 +331,7 @@ export const ConnectedNames = () => {
                                 src={item.image}
                                 alt={item.name}
                                 className="w-56 md:w-72 h-auto drop-shadow-2xl"
+                                onLoad={calculatePaths}
                             />
                         </div>
                     ))}

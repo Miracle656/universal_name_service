@@ -145,19 +145,19 @@ export const Hero = ({ onSearch }: HeroProps) => {
           ref={(el) => (coinsRef.current[index] = el)}
           src={coin.image}
           alt="Coin"
-          className="absolute w-16 h-16 md:w-20 md:h-20 opacity-60"
+          className="absolute w-10 h-10 md:w-20 md:h-20 opacity-40 md:opacity-60 transition-opacity duration-300"
           style={coin.position}
         />
       ))}
 
       {/* Main Content */}
       <div ref={containerRef} className="relative z-10 text-center px-4 max-w-4xl mx-auto">
-        <h1 className="text-5xl md:text-6xl lg:text-7xl font-black text-white mb-6 text-display">
+        <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black text-white mb-6 text-display">
           Your Identity Across
           <br />
           <span className="text-glow-pink">Every Chain</span>
         </h1>
-        <p className="text-lg md:text-xl text-gray-400 mb-12 font-light">
+        <p className="text-base sm:text-lg md:text-xl text-gray-400 mb-8 md:mb-12 font-light max-w-xl mx-auto">
           Universal names for the decentralized web
         </p>
 
@@ -171,14 +171,14 @@ export const Hero = ({ onSearch }: HeroProps) => {
                 placeholder="Search for your name..."
                 value={searchValue}
                 onChange={(e) => setSearchValue(e.target.value)}
-                className="flex-1 border-0 bg-transparent px-8 py-6 text-lg font-medium text-white placeholder:text-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="flex-1 border-0 bg-transparent px-6 md:px-8 py-4 md:py-6 text-base md:text-lg font-medium text-white placeholder:text-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0"
               />
               <Button
                 type="submit"
                 size="lg"
-                className="absolute right-2 bg-[#D548EC] hover:bg-[#e76ff5] text-white rounded-full px-8 py-6 h-auto glow-pink"
+                className="absolute right-2 bg-[#D548EC] hover:bg-[#e76ff5] text-white rounded-full px-4 md:px-8 py-4 md:py-6 h-auto glow-pink"
               >
-                <Search className="w-5 h-5" />
+                <Search className="w-4 h-4 md:w-5 md:h-5" />
               </Button>
             </div>
           </form>
@@ -201,7 +201,7 @@ export const Hero = ({ onSearch }: HeroProps) => {
           <img
             src={item.image}
             alt={item.name}
-            className="w-48 md:w-64 h-auto drop-shadow-2xl"
+            className="w-24 sm:w-32 md:w-64 h-auto drop-shadow-2xl opacity-50 md:opacity-100 transition-opacity duration-300"
           />
         </div>
       ))}
